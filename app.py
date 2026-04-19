@@ -1,9 +1,7 @@
 #!/usr/bin/env python3
 # ===============================================================
-# RASPBERRY PI RECEIVER FIXED
-# + SAFE JSON PARSE
-# + FILTER CORRUPT PACKET
-# + POSTGRESQL STABLE INSERT
+# RASPBERRY PI RECEIVER + CSV + FIREBASE
+# FIXED VERSION
 # ===============================================================
 
 import time
@@ -16,9 +14,12 @@ import adafruit_rfm9x
 import psycopg2
 import csv
 import os
+import firebase_admin
+
+from firebase_admin import credentials, db
 
 # ===============================================================
-# DATABASE
+# POSTGRESQL
 # ===============================================================
 conn = psycopg2.connect(
     host="localhost",
@@ -29,6 +30,7 @@ conn = psycopg2.connect(
 
 cur = conn.cursor()
 print("✅ PostgreSQL Connected")
+
 
 # ===============================================================
 # CONFIG
@@ -56,9 +58,8 @@ print("✅ LoRa Aktif")
 print("-" * 70)
 
 # ===============================================================
-# CSV SETUP
+# CSV
 # ===============================================================
-
 CSV_FILE = "sensor_data.csv"
 
 CSV_HEADER = [
@@ -69,40 +70,35 @@ CSV_HEADER = [
     "seq", "rssi"
 ]
 
-# buat file kalau belum ada
 if not os.path.exists(CSV_FILE):
     with open(CSV_FILE, "w", newline="") as f:
         writer = csv.writer(f)
         writer.writerow(CSV_HEADER)
 
 print("📁 CSV Ready:", CSV_FILE)
+
 # ===============================================================
-# HELPER: CLEAN PACKET
+# CLEAN PACKET
 # ===============================================================
 def clean_packet(raw):
-    """Fix packet ESP32 yang sering rusak"""
     raw = raw.strip()
 
     if not raw:
         return None
 
-    # kalau tidak ada { di awal → paksa tambah
     if not raw.startswith("{"):
         raw = "{" + raw
 
-    # kalau tidak ada } → tambah
     if not raw.endswith("}"):
         raw = raw + "}"
 
-    # fix kasus ':' di awal data ESP32 kamu
     if raw.startswith("{:"):
         raw = raw.replace("{:", "{\"t\":", 1)
 
     return raw
 
-
 # ===============================================================
-# RSSI NOISE
+# RSSI
 # ===============================================================
 def get_live_rssi():
     try:
@@ -122,9 +118,8 @@ def noise_label(v):
     else:
         return "🔴 Bising"
 
-
 # ===============================================================
-# PRINT
+# DISPLAY
 # ===============================================================
 def tampilkan_data(data, rssi):
     global TOTAL_PACKET
@@ -137,11 +132,11 @@ def tampilkan_data(data, rssi):
     print("🌡️ Suhu  :", data.get("t"))
     print("💧 Hum   :", data.get("h"))
     print("🌊 Level :", data.get("d"))
+    print("🌧️ Rain  :", data.get("rt"))
     print("═" * 70)
 
-
 # ===============================================================
-# DB INSERT
+# SAVE CSV
 # ===============================================================
 def simpan_csv(data, rssi):
     try:
@@ -168,6 +163,73 @@ def simpan_csv(data, rssi):
     except Exception as e:
         print("❌ CSV ERROR:", e)
 
+# ===============================================================
+# SAVE POSTGRESQL
+# ===============================================================
+def simpan_postgresql(data, rssi):
+    try:
+        cur.execute("""
+            INSERT INTO sensor_log (
+                waktu, suhu, kelembapan, tekanan,
+                jarak_air, flow,
+                rain_total, rain_rate,
+                float_level, alert,
+                seq, rssi
+            )
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+        """, (
+            datetime.datetime.now(),
+            data.get("t"),
+            data.get("h"),
+            data.get("p"),
+            data.get("d"),
+            data.get("f"),
+            data.get("rt"),
+            data.get("rr"),
+            data.get("lv"),
+            data.get("al"),
+            data.get("sq"),
+            rssi
+        ))
+
+        conn.commit()
+        print("🛢 PostgreSQL OK")
+
+    except Exception as e:
+        print("❌ PostgreSQL ERROR:", e)
+        conn.rollback()
+
+# ===============================================================
+# FIREBASE
+# ===============================================================
+def kirim_firebase(data, rssi):
+    try:
+        payload = {
+            "timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "suhu": data.get("t"),
+            "kelembapan": data.get("h"),
+            "tekanan": data.get("p"),
+            "jarak_air": data.get("d"),
+            "flow": data.get("f"),
+            "rain_total": data.get("rt"),
+            "rain_rate": data.get("rr"),
+            "float_level": data.get("lv"),
+            "alert": data.get("al"),
+            "seq": data.get("sq"),
+            "rssi": rssi,
+            "status": "Monitoring"
+        }
+
+        # realtime latest
+        fb_latest.set(payload)
+
+        # history log
+        fb_history.push(payload)
+
+        print("☁️ Firebase OK")
+
+    except Exception as e:
+        print("❌ Firebase ERROR:", e)
 
 # ===============================================================
 # LOOP
@@ -182,40 +244,36 @@ while True:
         if packet is not None:
 
             raw_str = packet.decode("utf-8", errors="ignore").strip()
-
-            # ==============================
-            # CLEAN PACKET (IMPORTANT)
-            # ==============================
             raw_str = clean_packet(raw_str)
 
-            # FILTER RUSAK
             if raw_str is None or not raw_str.startswith("{") or "}" not in raw_str:
-                print("\n⚠️ Packet rusak dilewati:")
-                print(raw_str)
-                print("📶 RSSI:", rfm9x.last_rssi)
+                print("⚠️ Packet rusak dilewati")
                 continue
 
-            # PARSE JSON
             try:
                 data = json.loads(raw_str)
 
-                simpan_csv(data, rfm9x.last_rssi)
-                tampilkan_data(data, rfm9x.last_rssi)
+                rssi = rfm9x.last_rssi
+
+                simpan_csv(data, rssi)
+                simpan_postgresql(data, rssi)
+                kirim_firebase(data, rssi)
+                tampilkan_data(data, rssi)
 
             except json.JSONDecodeError:
-                print("\n❌ JSON ERROR:")
-                print(raw_str)
-                print("📶 RSSI:", rfm9x.last_rssi)
+                print("❌ JSON ERROR:", raw_str)
 
         else:
             now = time.time()
 
             if now - LAST_WAIT_PRINT >= 2:
                 noise = get_live_rssi()
+
                 print(
                     f"[{datetime.datetime.now().strftime('%H:%M:%S')}] "
                     f"⌛ Waiting... | Noise: {noise} dBm | {noise_label(noise)}"
                 )
+
                 LAST_WAIT_PRINT = now
 
         time.sleep(0.2)
