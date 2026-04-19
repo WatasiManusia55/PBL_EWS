@@ -1,52 +1,27 @@
-# =========================
-# SECRET FILES
-# =========================
+# Python
+venv/
+__pycache__/
+*.pyc
+
+# Laravel
+/vendor/
+/node_modules/
+/storage/logs/*
+.env
+
+# Secret
 serviceAccountKey.json
 *.pem
 *.key
-*.crt
-.env
-.env.*
 
-# =========================
-# PYTHON
-# =========================
-venv/
-.env_venv/
-__pycache__/
-*.pyc
-*.pyo
-*.pyd
-
-# =========================
-# LOG
-# =========================
-*.log
-
-# =========================
-# DATA
-# =========================
-*.csv
-*.sqlite3
+# Binary besar
+mediamtx
 *.db
+*.sqlite
+*.log
+*.zip
+*.tar.gz
 
-# =========================
-# SYSTEM
-# =========================
+# OS
 .DS_Store
 Thumbs.db
-
-# =========================
-# LARGE BINARIES
-# =========================
-mediamtx
-*.zip
-*.tar
-*.gz
-*.iso
-
-# =========================
-# EDITOR
-# =========================
-.vscode/
-.idea/

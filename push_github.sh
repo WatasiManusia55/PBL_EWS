@@ -1,39 +1,96 @@
 #!/bin/bash
 
-echo "=== MASUK KE PROJECT ==="
+clear
+echo "=================================================="
+echo "🚀 SAFE GITHUB PUSH START"
+echo "=================================================="
+
 cd ~/Documents/Backend/PBL_EWS || exit
 
-# Cek apakah folder ini sudah menjadi repository git
-if [ ! -d ".git" ]; then
-    echo "--- Inisialisasi Git Baru ---"
+echo "📁 Masuk project..."
+
+# =========================
+# BUAT .gitignore
+# =========================
+echo "🛡 Membuat .gitignore"
+
+cat > .gitignore <<EOF
+# Python
+venv/
+__pycache__/
+*.pyc
+
+# Laravel
+/vendor/
+/node_modules/
+/storage/logs/*
+.env
+
+# Secret
+serviceAccountKey.json
+*.pem
+*.key
+
+# Binary besar
+mediamtx
+*.db
+*.sqlite
+*.log
+*.zip
+*.tar.gz
+
+# OS
+.DS_Store
+Thumbs.db
+EOF
+
+# =========================
+# REMOVE SECRET DARI TRACKING
+# =========================
+echo "🔒 Membersihkan file rahasia..."
+
+git rm --cached serviceAccountKey.json 2>/dev/null
+git rm --cached .env 2>/dev/null
+git rm --cached mediamtx 2>/dev/null
+
+# =========================
+# INIT GIT KALAU BELUM ADA
+# =========================
+if [ ! -d .git ]; then
     git init
 fi
 
-echo "=== SET REMOTE (RESET BIAR AMAN) ==="
-# Hapus remote lama jika ada, lalu tambah yang baru
+# =========================
+# FIX BRANCH MAIN
+# =========================
+git checkout -B main
+
+# =========================
+# ADD FILE
+# =========================
+echo "📦 Menambahkan file aman..."
+git add .
+
+# =========================
+# COMMIT
+# =========================
+echo "📝 Commit..."
+git commit -m "Update PBL_EWS - $(date '+%Y-%m-%d %H:%M:%S')" || echo "Tidak ada perubahan"
+
+# =========================
+# REMOTE
+# =========================
+echo "🌍 Set remote..."
+
 git remote remove origin 2>/dev/null
 git remote add origin git@github.com:WatasiManusia55/PBL_EWS.git
 
-echo "=== ADD SEMUA FILE ==="
-git add .
-
-echo "=== COMMIT DATA ==="
-# Cek apakah sudah pernah ada commit atau belum
-if git rev-parse --verify HEAD >/dev/null 2>&1; then
-    # Jika sudah ada, kita amend (ubah) commit terakhir
-    echo "--- Mengupdate commit terakhir ---"
-    git commit --amend -m "Update PBL_EWS - $(date +'%Y-%m-%d %H:%M:%S')" --date="$(date)"
-else
-    # Jika belum ada, buat commit pertama
-    echo "--- Membuat commit pertama ---"
-    git commit -m "Initial commit - $(date +'%Y-%m-%d %H:%M:%S')"
-fi
-
-echo "=== SET BRANCH MAIN ==="
-git branch -M main
-
-echo "=== PUSH KE GITHUB ==="
-# Gunakan --force hanya jika kamu yakin ingin menimpa data di GitHub dengan data di Pi
+# =========================
+# PUSH
+# =========================
+echo "🚀 Push ke GitHub..."
 git push -u origin main --force
 
-echo "=== DONE PUSH KE GITHUB 🚀 ==="
+echo "=================================================="
+echo "✅ DONE PUSH GITHUB"
+echo "=================================================="
