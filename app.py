@@ -1,22 +1,21 @@
 #!/usr/bin/env python3
 # ===============================================================
-# RASPBERRY PI RECEIVER + CSV + FIREBASE
-# FIXED VERSION
+# RASPBERRY PI RECEIVER + CSV + POSTGRESQL + FIREBASE (PYREBASE)
+# FINAL VERSION
 # ===============================================================
 
 import time
 import json
 import datetime
+import csv
+import os
+import psycopg2
+import pyrebase
+
 import digitalio
 import board
 import busio
 import adafruit_rfm9x
-import psycopg2
-import csv
-import os
-import firebase_admin
-
-from firebase_admin import credentials, db
 
 # ===============================================================
 # POSTGRESQL
@@ -31,6 +30,55 @@ conn = psycopg2.connect(
 cur = conn.cursor()
 print("✅ PostgreSQL Connected")
 
+# ===============================================================
+# AUTO CREATE TABLE
+# ===============================================================
+cur.execute("""
+CREATE TABLE IF NOT EXISTS sensor_log (
+    id SERIAL PRIMARY KEY,
+    waktu TIMESTAMP,
+    suhu REAL,
+    kelembapan REAL,
+    tekanan REAL,
+    jarak_air REAL,
+    flow REAL,
+    rain_total REAL,
+    rain_rate REAL,
+    float_level REAL,
+    alert VARCHAR(50),
+    seq INTEGER,
+    rssi INTEGER
+)
+""")
+conn.commit()
+
+print("🛢 Table sensor_log Ready")
+
+# ===============================================================
+# FIREBASE PYREBASE
+# ===============================================================
+config = {
+    "apiKey": "AIzaSyBmgepsmVXP1ekfUl47RsllWl-BnjKkSno",
+    "authDomain": "ews3-858da.firebaseapp.com",
+    "databaseURL": "https://ews3-858da-default-rtdb.asia-southeast1.firebasedatabase.app/",
+    "storageBucket": "ews3-858da.appspot.com"
+}
+
+firebase = pyrebase.initialize_app(config)
+auth = firebase.auth()
+db = firebase.database()
+
+EMAIL = "ewsraspy@gmail.com"
+PASSWORD = "ewskelompok3"
+UID = "7QgVPTHIHcW3S12i18ANE5m5b882"
+
+try:
+    user = auth.sign_in_with_email_and_password(EMAIL, PASSWORD)
+    token = user["idToken"]
+    print("🔥 Firebase Login Success")
+except Exception as e:
+    print("❌ Firebase Login Error:", e)
+    exit()
 
 # ===============================================================
 # CONFIG
@@ -75,7 +123,7 @@ if not os.path.exists(CSV_FILE):
         writer = csv.writer(f)
         writer.writerow(CSV_HEADER)
 
-print("📁 CSV Ready:", CSV_FILE)
+print("📁 CSV Ready")
 
 # ===============================================================
 # CLEAN PACKET
@@ -90,33 +138,12 @@ def clean_packet(raw):
         raw = "{" + raw
 
     if not raw.endswith("}"):
-        raw = raw + "}"
+        raw += "}"
 
     if raw.startswith("{:"):
         raw = raw.replace("{:", "{\"t\":", 1)
 
     return raw
-
-# ===============================================================
-# RSSI
-# ===============================================================
-def get_live_rssi():
-    try:
-        raw = rfm9x._read_u8(0x1B)
-        return raw - 157
-    except:
-        return -999
-
-
-def noise_label(v):
-    if v <= -115:
-        return "🟢 Bersih"
-    elif v <= -105:
-        return "🟡 Normal"
-    elif v <= -95:
-        return "🟠 Sedikit Noise"
-    else:
-        return "🔴 Bising"
 
 # ===============================================================
 # DISPLAY
@@ -169,14 +196,14 @@ def simpan_csv(data, rssi):
 def simpan_postgresql(data, rssi):
     try:
         cur.execute("""
-            INSERT INTO sensor_log (
-                waktu, suhu, kelembapan, tekanan,
-                jarak_air, flow,
-                rain_total, rain_rate,
-                float_level, alert,
-                seq, rssi
-            )
-            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+        INSERT INTO sensor_log (
+            waktu, suhu, kelembapan, tekanan,
+            jarak_air, flow,
+            rain_total, rain_rate,
+            float_level, alert,
+            seq, rssi
+        )
+        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
         """, (
             datetime.datetime.now(),
             data.get("t"),
@@ -200,9 +227,11 @@ def simpan_postgresql(data, rssi):
         conn.rollback()
 
 # ===============================================================
-# FIREBASE
+# SEND FIREBASE
 # ===============================================================
 def kirim_firebase(data, rssi):
+    global token
+
     try:
         payload = {
             "timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
@@ -220,17 +249,35 @@ def kirim_firebase(data, rssi):
             "status": "Monitoring"
         }
 
-        # realtime latest
-        fb_latest.set(payload)
-
-        # history log
-        fb_history.push(payload)
+        db.child("node1").child("latest").child(UID).set(payload, token)
+        db.child("node1").child("history").child(UID).push(payload, token)
 
         print("☁️ Firebase OK")
 
     except Exception as e:
         print("❌ Firebase ERROR:", e)
 
+# ===============================================================
+# TAMBAHKAN SETELAH FUNCTION clean_packet(raw)
+# ===============================================================
+
+def get_live_rssi():
+    try:
+        raw = rfm9x._read_u8(0x1B)
+        return raw - 157
+    except:
+        return -999
+
+
+def noise_label(v):
+    if v <= -115:
+        return "🟢 Bersih"
+    elif v <= -105:
+        return "🟡 Normal"
+    elif v <= -95:
+        return "🟠 Sedikit Noise"
+    else:
+        return "🔴 Bising"
 # ===============================================================
 # LOOP
 # ===============================================================
@@ -243,11 +290,10 @@ while True:
 
         if packet is not None:
 
-            raw_str = packet.decode("utf-8", errors="ignore").strip()
+            raw_str = packet.decode("utf-8", errors="ignore")
             raw_str = clean_packet(raw_str)
 
-            if raw_str is None or not raw_str.startswith("{") or "}" not in raw_str:
-                print("⚠️ Packet rusak dilewati")
+            if raw_str is None:
                 continue
 
             try:
@@ -260,23 +306,19 @@ while True:
                 kirim_firebase(data, rssi)
                 tampilkan_data(data, rssi)
 
-            except json.JSONDecodeError:
-                print("❌ JSON ERROR:", raw_str)
+            except Exception as e:
+                print("❌ JSON ERROR:", e)
 
         else:
             now = time.time()
-
             if now - LAST_WAIT_PRINT >= 2:
                 noise = get_live_rssi()
-
                 print(
                     f"[{datetime.datetime.now().strftime('%H:%M:%S')}] "
                     f"⌛ Waiting... | Noise: {noise} dBm | {noise_label(noise)}"
                 )
 
-                LAST_WAIT_PRINT = now
-
-        time.sleep(0.2)
+        LAST_WAIT_PRINT = now
 
     except KeyboardInterrupt:
         print("\n🛑 STOP")
