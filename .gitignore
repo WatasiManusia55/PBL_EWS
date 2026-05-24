@@ -1,0 +1,31 @@
+# Python
+venv/
+__pycache__/
+*.pyc
+
+# Laravel
+/vendor/
+/node_modules/
+/storage/logs/*
+.env
+
+# Secret
+serviceAccountKey.json
+*.pem
+*.key
+
+# Binary besar
+mediamtx
+*.db
+*.sqlite
+*.log
+*.zip
+*.tar.gz
+
+# CSV Export
+sensor_data.csv
+flood_prediction_log.csv
+
+# OS
+.DS_Store
+Thumbs.db
