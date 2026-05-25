@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-
 import time
 import json
 import datetime
@@ -17,7 +15,7 @@ import math
 import joblib
 from collections import deque
 import numpy as np
-import psutil  # Tambahan untuk monitoring sistem
+import psutil  # Untuk monitoring sistem (CPU/Mem/Disk/Pi temp)
 
 # ===============================================================
 # FUNGSI KONVERSI NUMPY KE NATIVE PYTHON
@@ -40,65 +38,55 @@ def convert_numpy_types(obj):
 # FUNGSI MONITORING SISTEM
 # ===============================================================
 def get_system_metrics():
-    """Mendapatkan metrik sistem: CPU, Memory, dan Disk usage"""
+    """Mendapatkan metrik sistem: CPU, Memory, Disk, Load Avg, Pi Temperature"""
     try:
-        # CPU Usage (persentase)
         cpu_percent = psutil.cpu_percent(interval=0.5)
-        
-        # Memory Usage
+
         memory = psutil.virtual_memory()
         memory_percent = memory.percent
         memory_used_mb = memory.used / (1024 * 1024)
         memory_total_mb = memory.total / (1024 * 1024)
-        
-        # Disk Usage (untuk root partition)
+
         disk = psutil.disk_usage('/')
         disk_percent = disk.percent
         disk_used_gb = disk.used / (1024 * 1024 * 1024)
         disk_total_gb = disk.total / (1024 * 1024 * 1024)
-        
-        # System load average (1, 5, 15 menit)
+
         load_avg = psutil.getloadavg()
-        
-        # Temperature (untuk Raspberry Pi)
+
+        # Temperature (Raspberry Pi thermal zone)
         temp_celsius = None
         try:
             with open('/sys/class/thermal/thermal_zone0/temp', 'r') as f:
                 temp_celsius = float(f.read().strip()) / 1000.0
         except:
             pass
-        
+
         return {
-            "cpu_percent": round(cpu_percent, 1),
-            "memory_percent": round(memory_percent, 1),
-            "memory_used_mb": round(memory_used_mb, 1),
-            "memory_total_mb": round(memory_total_mb, 1),
-            "disk_percent": round(disk_percent, 1),
-            "disk_used_gb": round(disk_used_gb, 1),
-            "disk_total_gb": round(disk_total_gb, 1),
-            "load_avg_1min": round(load_avg[0], 2),
-            "load_avg_5min": round(load_avg[1], 2),
-            "load_avg_15min": round(load_avg[2], 2),
-            "temperature_celsius": temp_celsius
+            "cpu_percent":          round(cpu_percent, 1),
+            "memory_percent":       round(memory_percent, 1),
+            "memory_used_mb":       round(memory_used_mb, 1),
+            "memory_total_mb":      round(memory_total_mb, 1),
+            "disk_percent":         round(disk_percent, 1),
+            "disk_used_gb":         round(disk_used_gb, 1),
+            "disk_total_gb":        round(disk_total_gb, 1),
+            "load_avg_1min":        round(load_avg[0], 2),
+            "load_avg_5min":        round(load_avg[1], 2),
+            "load_avg_15min":       round(load_avg[2], 2),
+            "temperature_celsius":  temp_celsius
         }
     except Exception as e:
         print(f"⚠️ Error getting system metrics: {e}")
         return {
-            "cpu_percent": 0,
-            "memory_percent": 0,
-            "memory_used_mb": 0,
-            "memory_total_mb": 0,
-            "disk_percent": 0,
-            "disk_used_gb": 0,
-            "disk_total_gb": 0,
-            "load_avg_1min": 0,
-            "load_avg_5min": 0,
-            "load_avg_15min": 0,
+            "cpu_percent": 0, "memory_percent": 0,
+            "memory_used_mb": 0, "memory_total_mb": 0,
+            "disk_percent": 0, "disk_used_gb": 0, "disk_total_gb": 0,
+            "load_avg_1min": 0, "load_avg_5min": 0, "load_avg_15min": 0,
             "temperature_celsius": None
         }
 
 def get_live_rssi():
-    """Mendapatkan nilai RSSI dari LoRa module"""
+    """Live RSSI dari register LoRa (tanpa nunggu paket)"""
     try:
         raw = rfm9x._read_u8(0x1B)
         return raw - 157
@@ -106,6 +94,7 @@ def get_live_rssi():
         return -999
 
 def noise_label(v):
+    """Label noise berdasarkan nilai RSSI (text only, untuk DB)"""
     if v <= -115:
         return "Bersih"
     elif v <= -105:
@@ -116,20 +105,16 @@ def noise_label(v):
         return "Bising"
 
 # ===============================================================
-# PREDIKSI & ANALISIS BANJIR (Dari Code Kedua)
+# CONFIG PREDIKSI & ANALISIS BANJIR
 # ===============================================================
-
-# ==================================================
-# CONFIG PREDIKSI
-# ==================================================
 
 MODEL_PATH = "flood_early_warning_rf_model.pkl"
 PREDICTION_LOG_PATH = "flood_prediction_log.csv"
 
-# 30 detik interval untuk prediksi (sama dengan interval sensor)
+# Interval prediksi (sama dengan interval kirim sensor)
 SENSOR_INTERVAL_SECONDS = 30
 
-# 30 detik interval:
+# History buffer (interval 30 detik):
 # 30 menit = 60 data
 # 1 jam    = 120 data
 # 3 jam    = 360 data
@@ -137,27 +122,29 @@ SENSOR_INTERVAL_SECONDS = 30
 MIN_HISTORY_FOR_PREDICTION = 60
 MAX_HISTORY = 720
 
-# jarak_air dari sensor/gateway dalam meter
-JARAK_AIR_DIVISOR = 100.0
-# ==================================================
-# THRESHOLD STATUS SIAGA
-# ==================================================
-# Air hampir/telah tumpah ke jalan
-THRESHOLD_SIAGA_1_M = 1.20
-# Waspada
-THRESHOLD_SIAGA_2_M = 1.40
-# Batas aman / air mulai naik
-THRESHOLD_SIAGA_3_M = 2.00
+# ----------------------------------------------------------------
+# KONVERSI SATUAN JARAK AIR
+# ----------------------------------------------------------------
+CM_TO_M_DIVISOR = 100.0
+
+# ----------------------------------------------------------------
+# KONFIGURASI FISIK SENSOR
+# ----------------------------------------------------------------
+
+
+THRESHOLD_SIAGA_1_M = 1.20  # Air tumpah ke jalan (DARURAT)
+THRESHOLD_SIAGA_2_M = 1.40  # Mendekati tumpah (WASPADA)
+THRESHOLD_SIAGA_3_M = 2.00  # Air mulai naik (ADVISORY)
+
+
+JARAK_DASAR_SUNGAI_M = 3.0
 
 # ==================================================
-# RULE-BASED CONFIG
+# RULE-BASED CONFIG (Estimasi Dampak)
 # ==================================================
 
-# Luas total wilayah RT dalam Ha
-TOTAL_AREA_HA = 6.0
-# Jumlah KK total di RT
-TOTAL_KK = 35
-# Kepadatan KK per Ha
+TOTAL_AREA_HA = 6.0                 # Luas total RT (Ha)
+TOTAL_KK = 35                       # Jumlah KK total
 KK_PER_HA = TOTAL_KK / TOTAL_AREA_HA
 
 # Persentase luas terdampak per siaga
@@ -165,7 +152,7 @@ SIAGA_3_DAMPAK_PERSEN = 0.20
 SIAGA_2_DAMPAK_PERSEN = 0.45
 SIAGA_1_DAMPAK_PERSEN = 0.70
 
-# Bantuan per KK per siaga
+# Bantuan per KK per siaga (IDR)
 BANTUAN_PER_KK = {
     "SIAGA 3": 350_000,
     "SIAGA 2": 650_000,
@@ -186,7 +173,7 @@ if os.path.exists(MODEL_PATH):
         model_data = joblib.load(MODEL_PATH)
         rf = model_data["rf"]
         features = model_data["features"]
-        threshold = float(model_data["threshold"])  # Konversi ke float
+        threshold = float(model_data["threshold"])
         model_loaded = True
         print("✅ Random Forest Model Loaded Successfully")
         print(f"   Threshold : {threshold}")
@@ -206,51 +193,67 @@ history = deque(maxlen=MAX_HISTORY)
 last_prediction_time = None
 
 # ==================================================
-# FUNGSI PREDIKSI
+# FUNGSI PREDIKSI & STATUS
 # ==================================================
 
 def get_siaga_status(pred_alert, distance_to_water_m):
-    """Menentukan status siaga berdasarkan jarak air"""
+    """
+    Tentukan status siaga gabungan: physical thresholds + ML early warning.
 
+    Urutan prioritas:
+      1. Cek fisik dulu (keselamatan diutamakan):
+         - distance <= 1.20m → SIAGA 1 (darurat fisik)
+         - distance <= 1.40m → SIAGA 2 (waspada fisik)
+      2. ML early warning:
+         - Kalau fisik aman tapi ML deteksi pola berbahaya
+           (pred_alert=1) → promote ke SIAGA 2
+      3. Advisory band:
+         - distance <= 2.00m → SIAGA 3 (air mulai naik, watch closely)
+      4. Sisanya → NORMAL (benar-benar aman)
+    """
+    pred_alert = int(pred_alert) if not isinstance(pred_alert, int) else pred_alert
     distance_to_water_m = float(distance_to_water_m)
 
-    # SIAGA 1
+    # 1. Fisik darurat/waspada
     if distance_to_water_m <= THRESHOLD_SIAGA_1_M:
         return "SIAGA 1"
-
-    # SIAGA 2
-    elif distance_to_water_m <= THRESHOLD_SIAGA_2_M:
+    if distance_to_water_m <= THRESHOLD_SIAGA_2_M:
         return "SIAGA 2"
 
-    # SIAGA 3
-    elif distance_to_water_m <= THRESHOLD_SIAGA_3_M:
+    # 2. ML early warning (fisik masih aman tapi pola sensor mengkhawatirkan)
+    if pred_alert == 1:
+        return "SIAGA 2"
+
+    # 3. Advisory
+    if distance_to_water_m <= THRESHOLD_SIAGA_3_M:
         return "SIAGA 3"
 
-    # Aman
-    else:
-        return "NORMAL"
+    # 4. Aman
+    return "NORMAL"
 
 def estimate_affected_area_ha(status_siaga):
-    """Luas terdampak dalam Ha berdasarkan status siaga"""
+    """Luas terdampak dalam Ha berdasarkan status siaga."""
     if status_siaga == "SIAGA 1":
         persen = SIAGA_1_DAMPAK_PERSEN
     elif status_siaga == "SIAGA 2":
         persen = SIAGA_2_DAMPAK_PERSEN
-    else:
+    elif status_siaga == "SIAGA 3":
         persen = SIAGA_3_DAMPAK_PERSEN
-    
+    else:
+        # NORMAL → tidak ada area terdampak
+        persen = 0.0
     return round(float(persen * TOTAL_AREA_HA), 2)
 
 def ha_to_m2(ha):
     return int(float(ha) * 10_000)
 
 def estimate_affected_kk(area_ha):
-    """Estimasi KK terdampak dari luas area"""
     kk = float(area_ha) * KK_PER_HA
     return min(int(round(kk)), TOTAL_KK)
 
 def estimate_budget(affected_kk, status_siaga):
-    """Total dana bantuan = KK terdampak x bantuan per KK sesuai siaga"""
+    """Total dana bantuan = KK terdampak x bantuan per KK sesuai siaga.
+    NORMAL atau status tak dikenal -> 0 (via dict default)."""
     bantuan = BANTUAN_PER_KK.get(status_siaga, 0)
     return int(int(affected_kk) * bantuan), int(bantuan)
 
@@ -258,60 +261,65 @@ def format_rupiah(amount):
     return "Rp{:,.0f}".format(int(amount)).replace(",", ".")
 
 def diagnose_flood_cause(feature_row, status_siaga):
-    """Diagnosis penyebab banjir berdasarkan data sensor"""
-    if status_siaga == "SIAGA 3":
+    """Diagnosis penyebab banjir berdasarkan data sensor."""
+    if status_siaga in ("NORMAL", "SIAGA 3"):
         return "Kondisi aman atau normal."
-    
+
     causes = []
-    
-    # Hujan lokal intensitas tinggi
+
+    # Hujan lokal berdasarkan akumulasi
     if float(feature_row.get("Rain_30min", 0)) >= 10:
         causes.append("Hujan lokal intensitas tinggi (30 menit terakhir)")
-    
     if float(feature_row.get("Rain_1h", 0)) >= 20:
         causes.append("Hujan lokal lebat (1 jam terakhir)")
-    
     if float(feature_row.get("Rain_3h", 0)) >= 30:
         causes.append("Akumulasi hujan tinggi (3 jam terakhir)")
-    
     if float(feature_row.get("Rain_6h", 0)) >= 50:
         causes.append("Akumulasi hujan sangat tinggi (6 jam terakhir)")
-    
-    # Banjir kiriman dari hulu
+
+    # Banjir kiriman dari hulu:
+    # air naik cepat (distance turun banyak) TANPA hujan lokal signifikan
     is_kiriman = (
         float(feature_row.get("WaterLevel_Change_1h", 0)) <= -0.15
         and float(feature_row.get("Rain_3h", 0)) < 10
     )
     if is_kiriman:
         causes.append("Kemungkinan banjir kiriman dari hulu")
-    
+
     # Kenaikan permukaan air cepat
     if float(feature_row.get("WaterLevel_Change_30min", 0)) <= -0.10:
         causes.append("Permukaan air naik cepat (30 menit terakhir)")
-    
     if float(feature_row.get("WaterLevel_Change_3h", 0)) <= -0.30:
         causes.append("Kenaikan permukaan air signifikan (3 jam terakhir)")
-    
-    # Tekanan udara rendah
+
+    # Tekanan udara rendah → cuaca buruk
     if float(feature_row.get("SeaLevelPressure_hPa", 1013)) <= 1005:
         causes.append("Tekanan udara rendah, indikasi cuaca buruk")
-    
-    # Jarak sensor sangat dekat
-    if float(feature_row.get("RiverWaterLevel_m", 10)) <= 1.0:
-        causes.append("Jarak sensor ke air sangat dekat, banjir terkonfirmasi")
-    
+
+    # Konfirmasi fisik
+    if float(feature_row.get("RiverWaterLevel_m", 10)) <= THRESHOLD_SIAGA_1_M:
+        causes.append("Air sudah mencapai permukaan jalan, banjir terkonfirmasi")
+
     if not causes:
         causes.append("Banjir terdeteksi, penyebab dominan belum teridentifikasi")
-    
+
     return " | ".join(causes)
 
 def convert_sensor_data_for_prediction(raw_data):
-    """Konversi data sensor ke format untuk prediksi"""
-    jarak_air = raw_data.get("jarak_air", 0)
-    if jarak_air is None:
-        jarak_air = 0
-    distance_m = float(jarak_air) / JARAK_AIR_DIVISOR
-    
+    """
+    Konversi paket sensor ke format input model.
+
+    Catatan satuan:
+      - raw_data['jarak_air'] di sini sudah dalam SENTIMETER
+        (sudah dikonversi mm -> cm di merge_with_last_data()).
+      - Dibagi CM_TO_M_DIVISOR (=100) untuk dapat METER, yang dipakai
+        sebagai input fitur model (RiverWaterLevel_m).
+    """
+    jarak_air_cm = raw_data.get("jarak_air", 0)
+    if jarak_air_cm is None:
+        jarak_air_cm = 0
+    distance_m = float(jarak_air_cm) / CM_TO_M_DIVISOR
+
     return {
         "timestamp":            datetime.datetime.now(),
         "Temperature_C":        float(raw_data.get("suhu", 0) or 0),
@@ -322,41 +330,40 @@ def convert_sensor_data_for_prediction(raw_data):
     }
 
 def build_features_for_prediction(current_data):
-    """Membangun fitur untuk prediksi berdasarkan history"""
+    """Bangun fitur untuk ML berdasarkan history."""
     history.append(current_data)
-    
     df_hist = pd.DataFrame(list(history))
-    
+
     current_distance = float(current_data["RiverWaterLevel_m"])
     current_precipitation = float(current_data["Precipitation_mm"])
-    
-    # Hitung akumulasi hujan dengan konversi ke float
+
+    # Akumulasi hujan; kalau history kurang, estimasi linear
     if len(df_hist) >= 60:
         rain_30min = float(df_hist["Precipitation_mm"].tail(60).sum())
     else:
         rain_30min = current_precipitation * 60
-    
+
     if len(df_hist) >= 120:
         rain_1h = float(df_hist["Precipitation_mm"].tail(120).sum())
     else:
         rain_1h = current_precipitation * 120
-    
+
     if len(df_hist) >= 360:
         rain_3h = float(df_hist["Precipitation_mm"].tail(360).sum())
     else:
         rain_3h = current_precipitation * 360
-    
+
     if len(df_hist) >= 720:
         rain_6h = float(df_hist["Precipitation_mm"].tail(720).sum())
     else:
         rain_6h = current_precipitation * 720
-    
+
     def water_change(period):
         if len(df_hist) >= period:
             old_distance = float(df_hist["RiverWaterLevel_m"].iloc[-period])
             return float(current_distance - old_distance)
         return 0.0
-    
+
     feature_row = {
         "Temperature_C":        float(current_data["Temperature_C"]),
         "Humidity_percent":     float(current_data["Humidity_percent"]),
@@ -371,28 +378,26 @@ def build_features_for_prediction(current_data):
         "WaterLevel_Change_1h":    float(water_change(120)),
         "WaterLevel_Change_3h":    float(water_change(360))
     }
-    
     return feature_row
 
 def predict_flood(feature_row):
-    """Prediksi banjir menggunakan Random Forest (jika tersedia)"""
+    """Prediksi banjir via RF (kalau ada) atau rule-based fallback."""
     if not model_loaded or rf is None:
-        # Rule-based prediction jika model tidak tersedia
+        # Fallback rule-based pakai threshold SIAGA fisik
         jarak = float(feature_row.get("RiverWaterLevel_m", 10))
-        if jarak <= 0.5:
+        if jarak <= THRESHOLD_SIAGA_1_M:
             return 0.95, 0.95, 1
-        elif jarak <= 1.0:
+        elif jarak <= THRESHOLD_SIAGA_2_M:
             return 0.7, 0.7, 1
-        elif jarak <= 1.3:
+        elif jarak <= THRESHOLD_SIAGA_3_M:
             return 0.4, 0.4, 0
         else:
             return 0.1, 0.1, 0
-    
+
     try:
-        # Buat DataFrame dengan fitur yang sesuai
         X = pd.DataFrame([feature_row])
         X_model = X[features]
-        rf_prob = float(rf.predict_proba(X_model)[:, 1][0])  # Konversi ke float
+        rf_prob = float(rf.predict_proba(X_model)[:, 1][0])
         final_prob = float(rf_prob)
         pred_alert = int(final_prob >= threshold)
         return rf_prob, final_prob, pred_alert
@@ -401,10 +406,8 @@ def predict_flood(feature_row):
         return 0.0, 0.0, 0
 
 def save_prediction_log(result):
-    """Menyimpan hasil prediksi ke CSV"""
-    # Konversi semua numpy types
+    """Append hasil prediksi ke CSV."""
     result = convert_numpy_types(result)
-    
     file_exists = os.path.exists(PREDICTION_LOG_PATH)
     log_row = pd.DataFrame([result])
     log_row.to_csv(PREDICTION_LOG_PATH, mode="a", header=not file_exists, index=False)
@@ -422,9 +425,9 @@ cur = conn.cursor()
 engine = create_engine("postgresql+psycopg2://pi:ews@localhost/ews_banjir")
 print("✅ PostgreSQL Connected")
 
-# ===============================================================
-# AUTO CREATE TABLE
-# ===============================================================
+# ----------------------------------------------------------------
+# AUTO CREATE TABLES
+# ----------------------------------------------------------------
 cur.execute("""
 CREATE TABLE IF NOT EXISTS sensor_log (
     id SERIAL PRIMARY KEY,
@@ -444,12 +447,12 @@ CREATE TABLE IF NOT EXISTS sensor_log (
 """)
 conn.commit()
 
-# Tambahan tabel untuk prediksi jika belum ada
 cur.execute("""
 CREATE TABLE IF NOT EXISTS flood_prediction (
     id SERIAL PRIMARY KEY,
     timestamp TIMESTAMP,
     distance_to_water_m REAL,
+    water_height_m REAL,
     rf_prob REAL,
     final_prob REAL,
     threshold REAL,
@@ -477,7 +480,13 @@ CREATE TABLE IF NOT EXISTS flood_prediction (
 """)
 conn.commit()
 
-# Tambahan tabel untuk system metrics
+# Schema safety net: amankan kolom water_height_m kalau tabel sudah ada
+try:
+    cur.execute("ALTER TABLE flood_prediction ADD COLUMN IF NOT EXISTS water_height_m REAL;")
+    conn.commit()
+except Exception:
+    conn.rollback()
+
 cur.execute("""
 CREATE TABLE IF NOT EXISTS system_metrics (
     id SERIAL PRIMARY KEY,
@@ -498,7 +507,7 @@ CREATE TABLE IF NOT EXISTS system_metrics (
 )
 """)
 conn.commit()
-print("🛢 Tables Ready")
+print("🛢 Tables Ready (sensor_log, flood_prediction, system_metrics)")
 
 # ===============================================================
 # FIREBASE
@@ -525,25 +534,24 @@ except Exception as e:
     exit()
 
 # ===============================================================
-# CONFIG
+# CONFIG / STATE
 # ===============================================================
 FREQ = 915.0
 TOTAL_PACKET = 0
 LAST_WAIT_PRINT = 0
 CSV_EXPORT_INTERVAL = 60
 LAST_CSV_EXPORT = 0
-SYSTEM_METRICS_INTERVAL = 30  # Kirim metrics tiap 30 detik
+SYSTEM_METRICS_INTERVAL = 30  # Kirim metrics ke Postgres tiap 30 detik
 LAST_SYSTEM_METRICS = 0
 
-# ===============================================================
-# CACHE DATA TERAKHIR
-# ===============================================================
 LAST_COMPLETE_DATA = {}
 LAST_PREDICTION_RESULT = None
 
 # ===============================================================
 # INIT LORA
 # ===============================================================
+# LoRa settings: pakai yg lebih robust (tx_power=15, coding_rate=6)
+# untuk jangkauan lebih jauh / lebih tahan noise, walau throughput turun.
 spi = busio.SPI(board.SCK, MOSI=board.MOSI, MISO=board.MISO)
 cs = digitalio.DigitalInOut(board.D4)
 reset = digitalio.DigitalInOut(board.D25)
@@ -563,25 +571,25 @@ def parse_packet(raw):
     raw = raw.strip()
     if not raw:
         return None
-    
+
     if raw.startswith('":'):
         raw = raw[3:]
         if not raw.startswith('{'):
             raw = '{' + raw
-    
+
     if raw.startswith(':'):
         raw = '{"t"' + raw
-    
+
     if not raw.startswith('{'):
         raw = '{' + raw
-    
+
     if not raw.endswith('}'):
         raw += '}'
-    
+
     raw = re.sub(r'([a-zA-Z]+):', r'"\1":', raw)
     raw = raw.replace("'", '"')
     raw = re.sub(r'[^\x20-\x7E]', '', raw)
-    
+
     try:
         return json.loads(raw)
     except json.JSONDecodeError:
@@ -601,17 +609,19 @@ def parse_packet(raw):
 # MERGE PARTIAL DATA
 # ===============================================================
 def merge_with_last_data(data):
+    """
+    Gabungkan paket sensor terbaru dengan cache paket terakhir.
+    Field 'd' (jarak air) dikonversi mm -> cm di sini.
+    Setelah fungsi ini, 'd' di LAST_COMPLETE_DATA satuannya CM.
+    """
     global LAST_COMPLETE_DATA
     important_keys = ['t', 'h', 'p', 'd']
     is_complete = any(k in data for k in important_keys)
-    
+
     if is_complete:
         LAST_COMPLETE_DATA.update(data)
-
-        # Konversi jarak air dari mm ke cm
         if 'd' in LAST_COMPLETE_DATA:
             LAST_COMPLETE_DATA['d'] = round(float(LAST_COMPLETE_DATA['d']) / 10, 1)
-
         return LAST_COMPLETE_DATA.copy()
     else:
         merged = LAST_COMPLETE_DATA.copy()
@@ -619,81 +629,83 @@ def merge_with_last_data(data):
         return merged
 
 # ===============================================================
-# UPDATE FIREBASE DENGAN PREDIKSI DAN SYSTEM METRICS
+# UPDATE FIREBASE
 # ===============================================================
 def update_firebase_with_prediction(sensor_data, prediction_result, rssi, system_metrics):
-    """Update Firebase dengan data sensor, prediksi, dan system metrics"""
+    """Push ke Firebase: data sensor + prediksi + system metrics."""
     try:
-        # Format timestamp
         current_time = datetime.datetime.now()
         timestamp_str = current_time.strftime("%Y-%m-%d %H:%M:%S")
-        
-        # Konversi semua nilai ke tipe native
-        sensor_data = convert_numpy_types(sensor_data)
+
+        sensor_data       = convert_numpy_types(sensor_data)
         prediction_result = convert_numpy_types(prediction_result or {})
-        system_metrics = convert_numpy_types(system_metrics)
-        
-        # Data yang akan dikirim ke Firebase (sesuai struktur dari gambar)
+        system_metrics    = convert_numpy_types(system_metrics)
+
         payload = {
-            "timestamp": timestamp_str,
-            "suhu": float(sensor_data.get('t', 0) or 0),
-            "kelembapan": float(sensor_data.get('h', 0) or 0),
-            "tekanan": float(sensor_data.get('p', 0) or 0),
-            "jarak_air": float(sensor_data.get('d', 0) or 0),
-            "flow": float(sensor_data.get('f', 0) or 0),
-            "rain_total": float(sensor_data.get('rt', 0) or 0),
-            "rain_rate": float(sensor_data.get('rr', 0) or 0),
+            "timestamp":   timestamp_str,
+            "suhu":        float(sensor_data.get('t', 0) or 0),
+            "kelembapan":  float(sensor_data.get('h', 0) or 0),
+            "tekanan":     float(sensor_data.get('p', 0) or 0),
+            "jarak_air":   float(sensor_data.get('d', 0) or 0),       # CM, raw distance
+            "flow":        float(sensor_data.get('f', 0) or 0),
+            "rain_total":  float(sensor_data.get('rt', 0) or 0),
+            "rain_rate":   float(sensor_data.get('rr', 0) or 0),
             "float_level": float(sensor_data.get('lv', 0) or 0),
-            "alert": str(sensor_data.get('al', 'NORMAL')),
-            "seq": int(sensor_data.get('sq', 0) or 0),
-            "rssi": int(rssi),
-            "status": "Monitoring",
-            # Tambahan data prediksi
-            "prediction_status": str(prediction_result.get("status", "SIAGA 3")),
-            "is_flooded": bool(prediction_result.get("is_flooded", False)),
-            "probability": float(prediction_result.get("final_prob", 0)),
+            "alert":       str(sensor_data.get('al', 'NORMAL')),
+            "seq":         int(sensor_data.get('sq', 0) or 0),
+            "rssi":        int(rssi),
+            "status":      "Monitoring",
+
+            # ---- DATA PREDIKSI & UI ----
+            "prediction_status":   str(prediction_result.get("status", "NORMAL")),
+            "is_flooded":          bool(prediction_result.get("is_flooded", False)),
+            "probability":         round(float(prediction_result.get("final_prob", 0)) * 100, 2),
+
+            # Khusus tampilan dashboard (M, dari dasar sungai)
+            "water_height_m":      float(prediction_result.get("water_height_m", 0)),
+
+            # Raw distance dari sensor (M, untuk log/audit ML)
             "distance_to_water_m": float(prediction_result.get("distance_to_water_m", 0)),
-            "affected_area_ha": float(prediction_result.get("affected_area_ha", 0)),
-            "affected_kk": int(prediction_result.get("affected_kk", 0)),
-            "total_budget_idr": int(prediction_result.get("total_budget_idr", 0)),
-            "diagnosis": str(prediction_result.get("diagnosis", "")),
-            # Tambahan system metrics
-            "system_metrics": {
-                "cpu_percent": system_metrics.get("cpu_percent", 0),
-                "memory_percent": system_metrics.get("memory_percent", 0),
-                "memory_used_mb": system_metrics.get("memory_used_mb", 0),
-                "memory_total_mb": system_metrics.get("memory_total_mb", 0),
-                "disk_percent": system_metrics.get("disk_percent", 0),
-                "disk_used_gb": system_metrics.get("disk_used_gb", 0),
-                "disk_total_gb": system_metrics.get("disk_total_gb", 0),
-                "load_avg_1min": system_metrics.get("load_avg_1min", 0),
-                "load_avg_5min": system_metrics.get("load_avg_5min", 0),
-                "load_avg_15min": system_metrics.get("load_avg_15min", 0),
-                "temperature_celsius": system_metrics.get("temperature_celsius")
+
+            "affected_area_ha":    float(prediction_result.get("affected_area_ha", 0)),
+            "affected_kk":         int(prediction_result.get("affected_kk", 0)),
+            "total_budget_idr":    int(prediction_result.get("total_budget_idr", 0)),
+            "diagnosis":           str(prediction_result.get("diagnosis", "")),
+
+            # ---- SYSTEM METRICS (untuk dashboard kesehatan device) ----
+            "cpu_percent":         system_metrics.get("cpu_percent", 0),
+            "memory_percent":      system_metrics.get("memory_percent", 0),
+            "memory_used_mb":      system_metrics.get("memory_used_mb", 0),
+            "memory_total_mb":     system_metrics.get("memory_total_mb", 0),
+            "disk_percent":        system_metrics.get("disk_percent", 0),
+            "disk_used_gb":        system_metrics.get("disk_used_gb", 0),
+            "disk_total_gb":       system_metrics.get("disk_total_gb", 0),
+            "load_avg_1min":       system_metrics.get("load_avg_1min", 0),
+            "load_avg_5min":       system_metrics.get("load_avg_5min", 0),
+            "load_avg_15min":      system_metrics.get("load_avg_15min", 0),
+            "temperature_celsius": system_metrics.get("temperature_celsius")
             }
         }
-        
-        # Update ke Firebase di node "latest"
+
+        # Latest snapshot (overwrite tiap paket)
         db.child("node1").child("latest").child(UID).set(payload, token)
-        
-        # Simpan ke history
+        # History (push-append)
         db.child("node1").child("history").child(UID).push(payload, token)
-        
-        # Simpan metrics terpisah untuk monitoring sistem
+        # Node monitoring kesehatan device terpisah
         db.child("system_monitoring").child(UID).set({
             "timestamp": timestamp_str,
             **system_metrics,
             "rssi": int(rssi),
             "noise_status": noise_label(rssi)
         }, token)
-        
-        print("☁️ Firebase Updated with Prediction & System Metrics")
-        
+
+        print("☁️ Firebase Updated (sensor + prediction + system metrics)")
+
     except Exception as e:
         print(f"❌ Firebase Update Error: {e}")
 
 def save_system_metrics_to_db(rssi, system_metrics):
-    """Simpan system metrics ke PostgreSQL"""
+    """Simpan system metrics ke tabel system_metrics."""
     try:
         cur.execute("""
         INSERT INTO system_metrics (
@@ -728,99 +740,100 @@ def save_system_metrics_to_db(rssi, system_metrics):
 # PROSES PREDIKSI
 # ===============================================================
 def process_prediction(sensor_dict, rssi):
-    """Proses prediksi berdasarkan data sensor terbaru"""
+    """Jalankan prediksi berdasarkan paket sensor terbaru."""
     global last_prediction_time, history
-    
+
     current_time = datetime.datetime.now()
-    
-    # Cek apakah sudah waktunya prediksi (setiap 30 detik)
+
+    # Throttle: maks 1 prediksi per SENSOR_INTERVAL_SECONDS
     if last_prediction_time is not None:
         time_diff = (current_time - last_prediction_time).total_seconds()
         if time_diff < SENSOR_INTERVAL_SECONDS:
             return None
-    
-    # Konversi data sensor untuk prediksi
+
     converted = convert_sensor_data_for_prediction(sensor_dict)
-    
-    # Build features
     feature_row = build_features_for_prediction(converted)
-    
-    # Cek apakah history sudah cukup
+
     if len(history) < MIN_HISTORY_FOR_PREDICTION:
         print(f"📊 Collecting history for prediction... {len(history)}/{MIN_HISTORY_FOR_PREDICTION}")
         return None
-    
-    # Prediksi
+
     rf_prob, final_prob, pred_alert = predict_flood(feature_row)
     distance_to_water_m = float(converted["RiverWaterLevel_m"])
     status_siaga = get_siaga_status(pred_alert, distance_to_water_m)
     is_flooded = status_siaga in ("SIAGA 1", "SIAGA 2")
-    
+
+    # ---- KONVERSI UI: distance-to-water -> water_height ----
+    # Tinggi air = (jarak sensor ke dasar) - (jarak sensor ke permukaan air)
+    tinggi_air_m = JARAK_DASAR_SUNGAI_M - distance_to_water_m
+    tinggi_air_m = max(0.0, float(tinggi_air_m))
+
     # Estimasi dampak
     affected_area_ha = estimate_affected_area_ha(status_siaga)
     affected_area_m2 = ha_to_m2(affected_area_ha)
     affected_kk = estimate_affected_kk(affected_area_ha)
     total_budget, bantuan_per_kk = estimate_budget(affected_kk, status_siaga)
-    
-    # Diagnosis
+
     diagnosis = diagnose_flood_cause(feature_row, status_siaga)
-    
-    # Hasil prediksi - semua nilai dipastikan tipe native Python
+
     prediction_result = {
-        "timestamp": converted["timestamp"],
-        "distance_to_water_m": float(distance_to_water_m),
-        "rf_prob": float(rf_prob),
-        "final_prob": float(final_prob),
-        "threshold": float(threshold),
-        "pred_alert": int(pred_alert),
-        "status": str(status_siaga),
-        "is_flooded": bool(is_flooded),
-        "affected_area_ha": float(affected_area_ha),
-        "affected_area_m2": int(affected_area_m2),
-        "affected_kk": int(affected_kk),
-        "bantuan_per_kk_idr": int(bantuan_per_kk),
-        "total_budget_idr": int(total_budget),
-        "diagnosis": str(diagnosis),
-        "suhu": float(feature_row["Temperature_C"]),
-        "kelembapan": float(feature_row["Humidity_percent"]),
-        "tekanan": float(feature_row["SeaLevelPressure_hPa"]),
-        "rain_rate": float(feature_row["Precipitation_mm"]),
-        "rain_30min": float(feature_row["Rain_30min"]),
-        "rain_1h": float(feature_row["Rain_1h"]),
-        "rain_3h": float(feature_row["Rain_3h"]),
-        "rain_6h": float(feature_row["Rain_6h"]),
+        "timestamp":               converted["timestamp"],
+        "distance_to_water_m":     float(distance_to_water_m),
+        "water_height_m":          float(tinggi_air_m),
+        "rf_prob":                 float(rf_prob),
+        "final_prob":              float(final_prob),
+        "threshold":               float(threshold),
+        "pred_alert":              int(pred_alert),
+        "status":                  str(status_siaga),
+        "is_flooded":              bool(is_flooded),
+        "affected_area_ha":        float(affected_area_ha),
+        "affected_area_m2":        int(affected_area_m2),
+        "affected_kk":             int(affected_kk),
+        "bantuan_per_kk_idr":      int(bantuan_per_kk),
+        "total_budget_idr":        int(total_budget),
+        "diagnosis":               str(diagnosis),
+        "suhu":                    float(feature_row["Temperature_C"]),
+        "kelembapan":              float(feature_row["Humidity_percent"]),
+        "tekanan":                 float(feature_row["SeaLevelPressure_hPa"]),
+        "rain_rate":               float(feature_row["Precipitation_mm"]),
+        "rain_30min":              float(feature_row["Rain_30min"]),
+        "rain_1h":                 float(feature_row["Rain_1h"]),
+        "rain_3h":                 float(feature_row["Rain_3h"]),
+        "rain_6h":                 float(feature_row["Rain_6h"]),
         "water_level_change_30min": float(feature_row["WaterLevel_Change_30min"]),
-        "water_level_change_1h": float(feature_row["WaterLevel_Change_1h"]),
-        "water_level_change_3h": float(feature_row["WaterLevel_Change_3h"])
+        "water_level_change_1h":    float(feature_row["WaterLevel_Change_1h"]),
+        "water_level_change_3h":    float(feature_row["WaterLevel_Change_3h"])
     }
-    
-    # Tampilkan hasil prediksi
+
+    # Print hasil
     print("\n" + "=" * 50)
     print("🔮 FLOOD PREDICTION RESULT")
     print("=" * 50)
     print(f"📊 Status Siaga    : {status_siaga}")
-    print(f"🌊 Jarak ke Air    : {round(distance_to_water_m, 3)} m")
+    print(f"🌊 Tinggi Air      : {round(tinggi_air_m, 2)} m")
+    print(f"📏 Jarak ke Air    : {round(distance_to_water_m, 3)} m (raw)")
     print(f"📈 Probabilitas    : {round(final_prob * 100, 2)}%")
     print(f"🏠 Luas Terdampak  : {affected_area_ha} Ha ({affected_area_m2} m²)")
     print(f"👨‍👩‍👧‍👦 KK Terdampak    : {affected_kk} KK")
     print(f"💰 Total Bantuan   : {format_rupiah(total_budget)}")
     print(f"📋 Diagnosis       : {diagnosis}")
     print("=" * 50)
-    
-    # Simpan ke database - pastikan semua nilai sudah tipe native
+
+    # Simpan ke Postgres
     try:
         cur.execute("""
         INSERT INTO flood_prediction (
-            timestamp, distance_to_water_m, rf_prob, final_prob, threshold,
+            timestamp, distance_to_water_m, water_height_m, rf_prob, final_prob, threshold,
             pred_alert, status, is_flooded, affected_area_ha, affected_area_m2,
             affected_kk, bantuan_per_kk_idr, total_budget_idr, diagnosis,
             suhu, kelembapan, tekanan, rain_rate, rain_30min, rain_1h,
             rain_3h, rain_6h, water_level_change_30min, water_level_change_1h,
             water_level_change_3h
-        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         """, (
             prediction_result["timestamp"],
             prediction_result["distance_to_water_m"],
+            prediction_result["water_height_m"],
             prediction_result["rf_prob"],
             prediction_result["final_prob"],
             prediction_result["threshold"],
@@ -850,18 +863,17 @@ def process_prediction(sensor_dict, rssi):
     except Exception as e:
         print(f"❌ DB Save Error: {e}")
         conn.rollback()
-    
-    # Simpan ke log CSV
+
     save_prediction_log(prediction_result)
-    
-    # Tampilkan alert jika siaga
+
+    # Alert console
     if status_siaga == "SIAGA 1":
         print("\n🔴🔴🔴 FLOOD WARNING - DARURAT! 🔴🔴🔴")
         print("🚨 SEGERA EVAKUASI! 🚨")
     elif status_siaga == "SIAGA 2":
         print("\n🟠🟠🟠 EARLY WARNING - WASPADA! 🟠🟠🟠")
         print("⚠️ PERSIAPKAN EVAKUASI! ⚠️")
-    
+
     last_prediction_time = current_time
     return prediction_result
 
@@ -878,21 +890,23 @@ def tampilkan_data(data, rssi, system_metrics):
     print(f"🌡️ Suhu  : {data.get('t', 'N/A')}")
     print(f"💧 Hum   : {data.get('h', 'N/A')}")
     print(f"🎯 Tekanan: {data.get('p', 'N/A')}")
-    print(f"🌊 Level : {data.get('d', 'N/A')} cm")
+    print(f"🌊 Jarak : {data.get('d', 'N/A')} cm (raw, sensor -> air)")
     print(f"💧 Float : {data.get('lv', 'N/A')}")
     print(f"⚠️ Alert : {data.get('al', 'NORMAL')}")
     print(f"🔢 Seq   : {data.get('sq', 'N/A')}")
     print("-" * 35)
     print("📊 SYSTEM METRICS:")
     print(f"💻 CPU    : {system_metrics.get('cpu_percent', 0)}%")
-    print(f"🧠 Memory : {system_metrics.get('memory_percent', 0)}% ({system_metrics.get('memory_used_mb', 0):.0f}/{system_metrics.get('memory_total_mb', 0):.0f} MB)")
-    print(f"💾 Disk   : {system_metrics.get('disk_percent', 0)}% ({system_metrics.get('disk_used_gb', 0):.1f}/{system_metrics.get('disk_total_gb', 0):.1f} GB)")
+    print(f"🧠 Memory : {system_metrics.get('memory_percent', 0)}% "
+          f"({system_metrics.get('memory_used_mb', 0):.0f}/{system_metrics.get('memory_total_mb', 0):.0f} MB)")
+    print(f"💾 Disk   : {system_metrics.get('disk_percent', 0)}% "
+          f"({system_metrics.get('disk_used_gb', 0):.1f}/{system_metrics.get('disk_total_gb', 0):.1f} GB)")
     if system_metrics.get('temperature_celsius'):
-        print(f"🌡️ Temp   : {system_metrics.get('temperature_celsius', 0):.1f}°C")
+        print(f"🌡️ Pi Temp: {system_metrics.get('temperature_celsius', 0):.1f}°C")
     print("═" * 70)
 
 # ===============================================================
-# SAVE POSTGRESQL
+# SAVE POSTGRESQL (sensor_log)
 # ===============================================================
 def simpan_postgresql(data, rssi):
     try:
@@ -937,60 +951,63 @@ def export_csv():
 # MAIN LOOP
 # ===============================================================
 print("📡 Receiver Ready with Flood Prediction & System Monitoring")
+print(f"   JARAK_DASAR_SUNGAI_M = {JARAK_DASAR_SUNGAI_M} m "
+      f"⚠️ pastikan ini sesuai instalasi lapangan")
 print("-" * 70)
 
 while True:
     try:
         packet = rfm9x.receive(timeout=1.0)
         current_time = time.time()
-        
-        # Ambil system metrics setiap saat (akan digunakan saat ada data atau periodik)
+
+        # Selalu refresh system metrics (dipakai di display + Firebase + waiting print)
         system_metrics = get_system_metrics()
-        rssi_current = get_live_rssi()
-        
-        # Kirim system metrics ke database secara periodik
+        rssi_current   = get_live_rssi()
+
+        # Simpan metrics ke Postgres secara periodik (independen dari kedatangan paket)
         if current_time - LAST_SYSTEM_METRICS >= SYSTEM_METRICS_INTERVAL:
             save_system_metrics_to_db(rssi_current, system_metrics)
             LAST_SYSTEM_METRICS = current_time
-        
+
         if packet is not None:
             raw_str = packet.decode("utf-8", errors="ignore")
             data = parse_packet(raw_str)
-            
+
             if data and len(data) > 0:
                 rssi = rfm9x.last_rssi
-                
-                # Merge data dengan data terakhir
+
+                # Merge partial -> full data (sekaligus konversi mm -> cm)
                 final_data = merge_with_last_data(data)
-                
-                # Simpan ke database
+
+                # Simpan ke sensor_log
                 simpan_postgresql(final_data, rssi)
-                
-                # Proses prediksi banjir
+
+                # Prediksi
                 prediction_result = process_prediction(final_data, rssi)
-                
-                # Update Firebase dengan data sensor, prediksi, AND system metrics
-                update_firebase_with_prediction(final_data, prediction_result or {}, rssi, system_metrics)
-                
-                # Tampilkan data
+
+                # Push ke Firebase: sensor + prediksi + system metrics
+                update_firebase_with_prediction(
+                    final_data, prediction_result or {}, rssi, system_metrics
+                )
+
+                # Display
                 tampilkan_data(final_data, rssi, system_metrics)
-                
+
             else:
                 print("❌ Gagal parse packet")
         else:
             now = time.time()
             if now - LAST_WAIT_PRINT >= 2:
-                noise = get_live_rssi()
                 print(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] "
-                      f"⌛ Waiting... | RSSI: {noise} dBm | {noise_label(noise)} | "
+                      f"⌛ Waiting... | RSSI: {rssi_current} dBm | {noise_label(rssi_current)} | "
                       f"CPU: {system_metrics.get('cpu_percent', 0)}% | "
                       f"Mem: {system_metrics.get('memory_percent', 0)}%")
                 LAST_WAIT_PRINT = now
-            
+
             if now - LAST_CSV_EXPORT >= CSV_EXPORT_INTERVAL:
                 export_csv()
                 LAST_CSV_EXPORT = now
-                
+
     except KeyboardInterrupt:
         print("\n🛑 STOP")
         break
