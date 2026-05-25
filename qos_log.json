@@ -1,0 +1,68 @@
+[
+    {
+        "waktu": "2026-05-25 16:54:38",
+        "seq_number": 425,
+        "packet_size_bytes": 88,
+        "delay_ms": 340.5,
+        "throughput_bps": 23.47,
+        "packet_loss_percent": 0.0,
+        "jitter_ms": 0.0,
+        "rssi": -75,
+        "noise_status": "Bising"
+    },
+    {
+        "waktu": "2026-05-25 16:55:38",
+        "seq_number": 426,
+        "packet_size_bytes": 88,
+        "delay_ms": 340.5,
+        "throughput_bps": 11.73,
+        "packet_loss_percent": 0.0,
+        "jitter_ms": 0.0,
+        "rssi": -75,
+        "noise_status": "Bising"
+    },
+    {
+        "waktu": "2026-05-25 16:56:38",
+        "seq_number": 427,
+        "packet_size_bytes": 88,
+        "delay_ms": 339.5,
+        "throughput_bps": 11.73,
+        "packet_loss_percent": 0.0,
+        "jitter_ms": 0.06,
+        "rssi": -77,
+        "noise_status": "Bising"
+    },
+    {
+        "waktu": "2026-05-25 16:57:38",
+        "seq_number": 428,
+        "packet_size_bytes": 88,
+        "delay_ms": 339.5,
+        "throughput_bps": 11.73,
+        "packet_loss_percent": 0.0,
+        "jitter_ms": 0.06,
+        "rssi": -77,
+        "noise_status": "Bising"
+    },
+    {
+        "waktu": "2026-05-25 16:58:38",
+        "seq_number": 429,
+        "packet_size_bytes": 88,
+        "delay_ms": 337.5,
+        "throughput_bps": 11.73,
+        "packet_loss_percent": 0.0,
+        "jitter_ms": 0.18,
+        "rssi": -81,
+        "noise_status": "Bising"
+    },
+    {
+        "waktu": "2026-05-25 16:59:38",
+        "seq_number": 430,
+        "packet_size_bytes": 88,
+        "delay_ms": 340.0,
+        "throughput_bps": 11.73,
+        "packet_loss_percent": 0.0,
+        "jitter_ms": 0.32,
+        "rssi": -76,
+        "noise_status": "Bising"
+    }
+]
