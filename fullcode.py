@@ -131,11 +131,9 @@ CM_TO_M_DIVISOR = 100.0
 # KONFIGURASI FISIK SENSOR
 # ----------------------------------------------------------------
 
-
 THRESHOLD_SIAGA_1_M = 1.20  # Air tumpah ke jalan (DARURAT)
 THRESHOLD_SIAGA_2_M = 1.40  # Mendekati tumpah (WASPADA)
-THRESHOLD_SIAGA_3_M = 2.00  # Air mulai naik (ADVISORY)
-
+# SIAGA 3 = default state (pemantauan rutin / aman)
 
 JARAK_DASAR_SUNGAI_M = 3.0
 
@@ -148,13 +146,12 @@ TOTAL_KK = 35                       # Jumlah KK total
 KK_PER_HA = TOTAL_KK / TOTAL_AREA_HA
 
 # Persentase luas terdampak per siaga
-SIAGA_3_DAMPAK_PERSEN = 0.20
+# SIAGA 3 = aman, tidak ada dampak (0%)
 SIAGA_2_DAMPAK_PERSEN = 0.45
 SIAGA_1_DAMPAK_PERSEN = 0.70
 
-# Bantuan per KK per siaga (IDR)
+# Bantuan per KK per siaga (IDR) — SIAGA 3 = aman, tidak ada bantuan
 BANTUAN_PER_KK = {
-    "SIAGA 3": 350_000,
     "SIAGA 2": 650_000,
     "SIAGA 1": 1_000_000,
 }
@@ -201,15 +198,12 @@ def get_siaga_status(pred_alert, distance_to_water_m):
     Tentukan status siaga gabungan: physical thresholds + ML early warning.
 
     Urutan prioritas:
-      1. Cek fisik dulu (keselamatan diutamakan):
+      1. Fisik darurat/waspada:
          - distance <= 1.20m → SIAGA 1 (darurat fisik)
          - distance <= 1.40m → SIAGA 2 (waspada fisik)
       2. ML early warning:
-         - Kalau fisik aman tapi ML deteksi pola berbahaya
-           (pred_alert=1) → promote ke SIAGA 2
-      3. Advisory band:
-         - distance <= 2.00m → SIAGA 3 (air mulai naik, watch closely)
-      4. Sisanya → NORMAL (benar-benar aman)
+         - Fisik aman tapi ML deteksi pola berbahaya (pred_alert=1) → SIAGA 2
+      3. Default → SIAGA 3 (pemantauan rutin / aman)
     """
     pred_alert = int(pred_alert) if not isinstance(pred_alert, int) else pred_alert
     distance_to_water_m = float(distance_to_water_m)
@@ -224,12 +218,8 @@ def get_siaga_status(pred_alert, distance_to_water_m):
     if pred_alert == 1:
         return "SIAGA 2"
 
-    # 3. Advisory
-    if distance_to_water_m <= THRESHOLD_SIAGA_3_M:
-        return "SIAGA 3"
-
-    # 4. Aman
-    return "NORMAL"
+    # 3. Default: pemantauan rutin
+    return "SIAGA 3"
 
 def estimate_affected_area_ha(status_siaga):
     """Luas terdampak dalam Ha berdasarkan status siaga."""
@@ -237,10 +227,8 @@ def estimate_affected_area_ha(status_siaga):
         persen = SIAGA_1_DAMPAK_PERSEN
     elif status_siaga == "SIAGA 2":
         persen = SIAGA_2_DAMPAK_PERSEN
-    elif status_siaga == "SIAGA 3":
-        persen = SIAGA_3_DAMPAK_PERSEN
     else:
-        # NORMAL → tidak ada area terdampak
+        # SIAGA 3 (pemantauan rutin / aman) → tidak ada area terdampak
         persen = 0.0
     return round(float(persen * TOTAL_AREA_HA), 2)
 
@@ -253,7 +241,7 @@ def estimate_affected_kk(area_ha):
 
 def estimate_budget(affected_kk, status_siaga):
     """Total dana bantuan = KK terdampak x bantuan per KK sesuai siaga.
-    NORMAL atau status tak dikenal -> 0 (via dict default)."""
+    SIAGA 3 atau status tak dikenal -> 0 (via dict default)."""
     bantuan = BANTUAN_PER_KK.get(status_siaga, 0)
     return int(int(affected_kk) * bantuan), int(bantuan)
 
@@ -262,8 +250,8 @@ def format_rupiah(amount):
 
 def diagnose_flood_cause(feature_row, status_siaga):
     """Diagnosis penyebab banjir berdasarkan data sensor."""
-    if status_siaga in ("NORMAL", "SIAGA 3"):
-        return "Kondisi aman atau normal."
+    if status_siaga == "SIAGA 3":
+        return "Kondisi aman, pemantauan rutin."
 
     causes = []
 
@@ -389,8 +377,6 @@ def predict_flood(feature_row):
             return 0.95, 0.95, 1
         elif jarak <= THRESHOLD_SIAGA_2_M:
             return 0.7, 0.7, 1
-        elif jarak <= THRESHOLD_SIAGA_3_M:
-            return 0.4, 0.4, 0
         else:
             return 0.1, 0.1, 0
 
@@ -657,7 +643,7 @@ def update_firebase_with_prediction(sensor_data, prediction_result, rssi, system
             "status":      "Monitoring",
 
             # ---- DATA PREDIKSI & UI ----
-            "prediction_status":   str(prediction_result.get("status", "NORMAL")),
+            "prediction_status":   str(prediction_result.get("status", "SIAGA 3")),
             "is_flooded":          bool(prediction_result.get("is_flooded", False)),
             "probability":         round(float(prediction_result.get("final_prob", 0)) * 100, 2),
 
@@ -684,7 +670,6 @@ def update_firebase_with_prediction(sensor_data, prediction_result, rssi, system
             "load_avg_5min":       system_metrics.get("load_avg_5min", 0),
             "load_avg_15min":      system_metrics.get("load_avg_15min", 0),
             "temperature_celsius": system_metrics.get("temperature_celsius")
-            }
         }
 
         # Latest snapshot (overwrite tiap paket)
