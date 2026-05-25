@@ -963,7 +963,7 @@ print(f"   JARAK_DASAR_SUNGAI_M = {JARAK_DASAR_SUNGAI_M} m "
 print("-" * 70)
 
 # QOS
-def calculate_realtime_qos(current_sq, packet_size_bytes, current_rssi):
+def calculate_realtime_qos(current_sq, packet_size_bytes, current_rssi, current_snr):
     now = datetime.datetime.now()
     current_timestamp = time.time()
     
@@ -1009,6 +1009,7 @@ def calculate_realtime_qos(current_sq, packet_size_bytes, current_rssi):
         "packet_loss_percent": round(float(packet_loss_percent), 2), 
         "jitter_ms": round(float(jitter_ms), 2),
         "rssi": int(current_rssi), 
+        "snr": round(float(current_snr), 1),
         "noise_status": noise_label(current_rssi)
     }
 
@@ -1043,9 +1044,11 @@ while True:
             if data and 'sq' in data:
                 current_sq = int(data.get('sq'))
                 current_rssi = int(rfm9x.last_rssi)
-                qos_metrics = calculate_realtime_qos(current_sq, packet_size, current_rssi)
+                current_snr = float(rfm9x.last_snr)
+
+                qos_metrics = calculate_realtime_qos(current_sq, packet_size, current_rssi, current_snr)
                 write_qos_to_json(qos_metrics)
-                print(f"\n[QoS LIVE LOG - SQ: {current_sq}] Delay: {qos_metrics['delay_ms']}ms | Loss: {qos_metrics['packet_loss_percent']}% | Jitter: {qos_metrics['jitter_ms']}ms | RSSI: {current_rssi} dBm")
+                print(f"\n[QoS LIVE LOG - SQ: {current_sq}] Delay: {qos_metrics['delay_ms']}ms | Loss: {qos_metrics['packet_loss_percent']}% | RSSI: {current_rssi} dBm | SNR: {current_snr} dB")
         current_time = time.time()
 
         # Selalu refresh system metrics (dipakai di display + Firebase + waiting print)
