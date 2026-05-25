@@ -23,10 +23,25 @@ def generate_qos_charts_from_json():
             
         print(f" 📊 Memproses {len(df)} baris data nyata dari JSON untuk plotting grafik...")
         
+        # ===============================================================
+        # EKSTRAKSI RENTANG TANGGAL DAN JAM SECARA OTOMATIS
+        # ===============================================================
+        # Pastikan kolom waktu tipenya datetime agar bisa diurutkan dengan benar
+        # Urutkan berdasarkan waktu terlebih dahulu agar periode awal-akhir benar
+        df['waktu'] = pd.to_datetime(df['waktu'])
+        df = df.sort_values('waktu')  # <-- UBAH KE 'waktu' SEBELUM MENGAMBIL ILOC
+
+        waktu_awal = df['waktu'].iloc[0].strftime('%d-%m-%Y %H:%M:%S')
+        waktu_akhir = df['waktu'].iloc[-1].strftime('%d-%m-%Y %H:%M:%S')
+        rentang_waktu = f"Periode Pengujian: {waktu_awal} s.d {waktu_akhir}"
+        
         # Set up visualisasi matplotlib
         sns.set_theme(style="whitegrid")
-        fig, axes = plt.subplots(2, 2, figsize=(14, 9))
-        fig.suptitle('GRAFIK ANALISIS QUALITY OF SERVICE (QoS) TRANSMISI LORA (SUMBER: DATA JSON)', fontsize=14, fontweight='bold')
+        fig, axes = plt.subplots(2, 2, figsize=(14, 10)) # Tinggi dinaikkan sedikit agar muat teks tambahan
+        
+        # Menampilkan Judul Utama beserta Rentang Tanggal & Jam Pengujian
+        judul_lengkap = f"GRAFIK ANALISIS QUALITY OF SERVICE (QoS) TRANSMISI LORA\n({rentang_waktu})"
+        fig.suptitle(judul_lengkap, fontsize=13, fontweight='bold', y=0.96)
         
         # Plot 1: Delay & Jitter
         axes[0, 0].plot(df['seq_number'], df['delay_ms'], label='Delay (ms)', color='#1f77b4', linewidth=2)
@@ -54,11 +69,12 @@ def generate_qos_charts_from_json():
         axes[1, 1].set_xlabel('RSSI (dBm)')
         axes[1, 1].set_ylabel('Delay (ms)')
         
-        plt.tight_layout(rect=[0, 0.03, 1, 0.95])
+        # Mengatur padding agar layout tidak tumpang tindih dengan judul bertingkat
+        plt.tight_layout(rect=[0, 0.03, 1, 0.92])
         
         output_filename = "grafik_pengukuran_qos_json.png"
         plt.savefig(output_filename, dpi=300)
-        print(f" ✅ File visualisasi '{output_filename}' sukses diexport berdasarkan data otentik JSON.")
+        print(f" ✅ File visualisasi '{output_filename}' sukses diexport dengan info rentang waktu pengujian.")
         
     except Exception as e:
         print(f" ❌ Terjadi kesalahan saat membaca atau melakukan komputasi grafik: {e}")
