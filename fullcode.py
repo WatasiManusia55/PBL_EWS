@@ -569,6 +569,7 @@ rfm9x.signal_bandwidth = 125000
 rfm9x.coding_rate = 6
 rfm9x.spreading_factor = 10
 rfm9x.enable_crc = True
+rfm9x.sync_word = 0x12
 print("✅ LoRa Aktif")
 print("-" * 70)
 
@@ -972,23 +973,23 @@ def calculate_realtime_qos(current_sq, packet_size_bytes, current_rssi, current_
         qos_state["total_packet_expected"] = 1
     else:
         qos_state["total_packet_expected"] = (current_sq - qos_state["initial_sequence_number"]) + 1
-        
+
+# packet loss: hitung berdasarkan selisih sequence number (anggap urut, tanpa duplikat) 
     qos_state["total_packet_received"] += 1
     lost_packets = qos_state["total_packet_expected"] - qos_state["total_packet_received"]
     packet_loss_percent = (max(0, lost_packets) / qos_state["total_packet_expected"]) * 100.0
-
+# delay: estimasi waktu on-air + faktor gangguan sinyal (berdasarkan RSSI)
     base_time_on_air_ms = 328.0  # Karakteristik SF10
     signal_interference_factor = abs(current_rssi + 100) * 0.5
     current_delay_ms = base_time_on_air_ms + signal_interference_factor
     qos_state["history_delay"].append(current_delay_ms)
-
+# jitter: variasi delay antar paket, dihitung sebagai rata-rata bergerak dari selisih delay
     jitter_ms = 0.0
     if qos_state["last_packet_timestamp"] is not None:
         delay_difference = abs(current_delay_ms - qos_state["last_delay_ms"])
         qos_state["jitter_accumulator"] += (delay_difference - qos_state["jitter_accumulator"]) / 16.0
         jitter_ms = qos_state["jitter_accumulator"]
-
-    # Durasi antar paket nyata
+# throughput: hitung berdasarkan ukuran paket dan durasi antar paket, tapi gunakan interval minimal untuk menghindari spike saat paket datang berdekatan
     if qos_state["last_packet_timestamp"] is not None:
         duration_seconds = current_timestamp - qos_state["last_packet_timestamp"]
         # Jika jeda terlalu rapat, gunakan interval pengiriman sensor (30 detik)
