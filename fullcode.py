@@ -519,27 +519,27 @@ except Exception as e:
     print("❌ Firebase Login Error:", e)
     exit()
 
-# ===============================================================
-# TAMBAHAN PENDUKUNG QOS REAL-TIME (TIDAK MERUSAK KODE ASLI)
-# ===============================================================
-QOS_JSON_LOG_PATH = "qos_log.json"
+# # ===============================================================
+# # TAMBAHAN PENDUKUNG QOS REAL-TIME (TIDAK MERUSAK KODE ASLI)
+# # ===============================================================
+# QOS_JSON_LOG_PATH = "qos_log.json"
 
-qos_state = {
-    "total_packet_expected": 0,
-    "total_packet_received": 0,
-    "last_sequence_number": None,
-    "initial_sequence_number": None,
-    "last_packet_timestamp": None,
-    "last_delay_ms": 0,
-    "jitter_accumulator": 0.0,
-    "history_delay": []
-}
+# qos_state = {
+#     "total_packet_expected": 0,
+#     "total_packet_received": 0,
+#     "last_sequence_number": None,
+#     "initial_sequence_number": None,
+#     "last_packet_timestamp": None,
+#     "last_delay_ms": 0,
+#     "jitter_accumulator": 0.0,
+#     "history_delay": []
+# }
 
-def noise_label(v):
-    if v <= -115: return "Bersih"
-    elif v <= -105: return "Normal"
-    elif v <= -95: return "Sedikit Noise"
-    else: return "Bising"
+# def noise_label(v):
+#     if v <= -115: return "Bersih"
+#     elif v <= -105: return "Normal"
+#     elif v <= -95: return "Sedikit Noise"
+#     else: return "Bising"
 
 # ===============================================================
 # CONFIG / STATE
@@ -963,73 +963,73 @@ print(f"   JARAK_DASAR_SUNGAI_M = {JARAK_DASAR_SUNGAI_M} m "
       f"⚠️ pastikan ini sesuai instalasi lapangan")
 print("-" * 70)
 
-# QOS
-def calculate_realtime_qos(current_sq, packet_size_bytes, current_rssi, current_snr):
-    now = datetime.datetime.now()
-    current_timestamp = time.time()
+# # QOS
+# def calculate_realtime_qos(current_sq, packet_size_bytes, current_rssi, current_snr):
+#     now = datetime.datetime.now()
+#     current_timestamp = time.time()
     
-    if qos_state["initial_sequence_number"] is None:
-        qos_state["initial_sequence_number"] = current_sq
-        qos_state["total_packet_expected"] = 1
-    else:
-        qos_state["total_packet_expected"] = (current_sq - qos_state["initial_sequence_number"]) + 1
+#     if qos_state["initial_sequence_number"] is None:
+#         qos_state["initial_sequence_number"] = current_sq
+#         qos_state["total_packet_expected"] = 1
+#     else:
+#         qos_state["total_packet_expected"] = (current_sq - qos_state["initial_sequence_number"]) + 1
 
-# packet loss: hitung berdasarkan selisih sequence number (anggap urut, tanpa duplikat) 
-    qos_state["total_packet_received"] += 1
-    lost_packets = qos_state["total_packet_expected"] - qos_state["total_packet_received"]
-    packet_loss_percent = (max(0, lost_packets) / qos_state["total_packet_expected"]) * 100.0
-# delay: estimasi waktu on-air + faktor gangguan sinyal (berdasarkan RSSI)
-    base_time_on_air_ms = 328.0  # Karakteristik SF10
-    signal_interference_factor = abs(current_rssi + 100) * 0.5
-    current_delay_ms = base_time_on_air_ms + signal_interference_factor
-    qos_state["history_delay"].append(current_delay_ms)
-# jitter: variasi delay antar paket, dihitung sebagai rata-rata bergerak dari selisih delay
-    jitter_ms = 0.0
-    if qos_state["last_packet_timestamp"] is not None:
-        delay_difference = abs(current_delay_ms - qos_state["last_delay_ms"])
-        qos_state["jitter_accumulator"] += (delay_difference - qos_state["jitter_accumulator"]) / 16.0
-        jitter_ms = qos_state["jitter_accumulator"]
-# throughput: hitung berdasarkan ukuran paket dan durasi antar paket, tapi gunakan interval minimal untuk menghindari spike saat paket datang berdekatan
-    if qos_state["last_packet_timestamp"] is not None:
-        duration_seconds = current_timestamp - qos_state["last_packet_timestamp"]
-        # Jika jeda terlalu rapat, gunakan interval pengiriman sensor (30 detik)
-        throughput_bps = (packet_size_bytes * 8) / duration_seconds if duration_seconds > 0 else (packet_size_bytes * 8) / 30
-    else:
-        throughput_bps = (packet_size_bytes * 8) / 30
+# # packet loss: hitung berdasarkan selisih sequence number (anggap urut, tanpa duplikat) 
+#     qos_state["total_packet_received"] += 1
+#     lost_packets = qos_state["total_packet_expected"] - qos_state["total_packet_received"]
+#     packet_loss_percent = (max(0, lost_packets) / qos_state["total_packet_expected"]) * 100.0
+# # delay: estimasi waktu on-air + faktor gangguan sinyal (berdasarkan RSSI)
+#     base_time_on_air_ms = 328.0  # Karakteristik SF10
+#     signal_interference_factor = abs(current_rssi + 100) * 0.5
+#     current_delay_ms = base_time_on_air_ms + signal_interference_factor
+#     qos_state["history_delay"].append(current_delay_ms)
+# # jitter: variasi delay antar paket, dihitung sebagai rata-rata bergerak dari selisih delay
+#     jitter_ms = 0.0
+#     if qos_state["last_packet_timestamp"] is not None:
+#         delay_difference = abs(current_delay_ms - qos_state["last_delay_ms"])
+#         qos_state["jitter_accumulator"] += (delay_difference - qos_state["jitter_accumulator"]) / 16.0
+#         jitter_ms = qos_state["jitter_accumulator"]
+# # throughput: hitung berdasarkan ukuran paket dan durasi antar paket, tapi gunakan interval minimal untuk menghindari spike saat paket datang berdekatan
+#     if qos_state["last_packet_timestamp"] is not None:
+#         duration_seconds = current_timestamp - qos_state["last_packet_timestamp"]
+#         # Jika jeda terlalu rapat, gunakan interval pengiriman sensor (30 detik)
+#         throughput_bps = (packet_size_bytes * 8) / duration_seconds if duration_seconds > 0 else (packet_size_bytes * 8) / 30
+#     else:
+#         throughput_bps = (packet_size_bytes * 8) / 30
 
-    qos_state["last_sequence_number"] = current_sq
-    qos_state["last_packet_timestamp"] = current_timestamp
-    qos_state["last_delay_ms"] = current_delay_ms
+#     qos_state["last_sequence_number"] = current_sq
+#     qos_state["last_packet_timestamp"] = current_timestamp
+#     qos_state["last_delay_ms"] = current_delay_ms
 
-    return {
-        "waktu": now.strftime("%Y-%m-%d %H:%M:%S"), 
-        "seq_number": int(current_sq), 
-        "packet_size_bytes": int(packet_size_bytes),
-        "delay_ms": round(float(current_delay_ms), 2), 
-        "throughput_bps": round(float(throughput_bps), 2),
-        "packet_loss_percent": round(float(packet_loss_percent), 2), 
-        "jitter_ms": round(float(jitter_ms), 2),
-        "rssi": int(current_rssi), 
-        "snr": round(float(current_snr), 1),
-        "noise_status": noise_label(current_rssi)
-    }
+#     return {
+#         "waktu": now.strftime("%Y-%m-%d %H:%M:%S"), 
+#         "seq_number": int(current_sq), 
+#         "packet_size_bytes": int(packet_size_bytes),
+#         "delay_ms": round(float(current_delay_ms), 2), 
+#         "throughput_bps": round(float(throughput_bps), 2),
+#         "packet_loss_percent": round(float(packet_loss_percent), 2), 
+#         "jitter_ms": round(float(jitter_ms), 2),
+#         "rssi": int(current_rssi), 
+#         "snr": round(float(current_snr), 1),
+#         "noise_status": noise_label(current_rssi)
+#     }
 
-def write_qos_to_json(qos_metrics):
-    try:
-        log_data = []
-        if os.path.exists(QOS_JSON_LOG_PATH):
-            with open(QOS_JSON_LOG_PATH, 'r') as file:
-                try:
-                    log_data = json.load(file)
-                    if not isinstance(log_data, list): log_data = []
-                except json.JSONDecodeError: log_data = []
+# def write_qos_to_json(qos_metrics):
+#     try:
+#         log_data = []
+#         if os.path.exists(QOS_JSON_LOG_PATH):
+#             with open(QOS_JSON_LOG_PATH, 'r') as file:
+#                 try:
+#                     log_data = json.load(file)
+#                     if not isinstance(log_data, list): log_data = []
+#                 except json.JSONDecodeError: log_data = []
         
-        log_data.append(qos_metrics)
-        with open(QOS_JSON_LOG_PATH, 'w') as file:
-            json.dump(log_data, file, indent=4)
-    except Exception as e:
-        print(f" ❌ Gagal menulis berkas log JSON: {e}")
-# QOS: hitung packet loss, delay, jitter berdasarkan sequence number dan timestamp
+#         log_data.append(qos_metrics)
+#         with open(QOS_JSON_LOG_PATH, 'w') as file:
+#             json.dump(log_data, file, indent=4)
+#     except Exception as e:
+#         print(f" ❌ Gagal menulis berkas log JSON: {e}")
+# # QOS: hitung packet loss, delay, jitter berdasarkan sequence number dan timestamp
 
 while True:
     try:
