@@ -40,7 +40,7 @@ def convert_numpy_types(obj):
 def get_system_metrics():
     """Mendapatkan metrik sistem: CPU, Memory, Disk, Load Avg, Pi Temperature"""
     try:
-        cpu_percent = psutil.cpu_percent(interval=0.5)
+        cpu_percent = psutil.cpu_percent(interval=None)
 
         memory = psutil.virtual_memory()
         memory_percent = memory.percent
@@ -215,7 +215,10 @@ def get_siaga_status(pred_alert, distance_to_water_m):
         return "SIAGA 2"
 
     # 2. ML early warning (fisik masih aman tapi pola sensor mengkhawatirkan)
-    if pred_alert == 1:
+    if (
+        pred_alert == 1 and
+        distance_to_water_m <= 1.8 # Batas ML untuk waspada (bisa disesuaikan berdasarkan eksperimen)  
+    ):
         return "SIAGA 2"
 
     # 3. Default: pemantauan rutin
@@ -329,22 +332,22 @@ def build_features_for_prediction(current_data):
     if len(df_hist) >= 60:
         rain_30min = float(df_hist["Precipitation_mm"].tail(60).sum())
     else:
-        rain_30min = current_precipitation * 60
+        rain_30min = current_precipitation * 0.5
 
     if len(df_hist) >= 120:
         rain_1h = float(df_hist["Precipitation_mm"].tail(120).sum())
     else:
-        rain_1h = current_precipitation * 120
+        rain_1h = current_precipitation * 1
 
     if len(df_hist) >= 360:
         rain_3h = float(df_hist["Precipitation_mm"].tail(360).sum())
     else:
-        rain_3h = current_precipitation * 360
+        rain_3h = current_precipitation * 3
 
     if len(df_hist) >= 720:
         rain_6h = float(df_hist["Precipitation_mm"].tail(720).sum())
     else:
-        rain_6h = current_precipitation * 720
+        rain_6h = current_precipitation * 6
 
     def water_change(period):
         if len(df_hist) >= period:
@@ -549,8 +552,9 @@ TOTAL_PACKET = 0
 LAST_WAIT_PRINT = 0
 CSV_EXPORT_INTERVAL = 60
 LAST_CSV_EXPORT = 0
-SYSTEM_METRICS_INTERVAL = 30  # Kirim metrics ke Postgres tiap 30 detik
-LAST_SYSTEM_METRICS = 0
+SYSTEM_METRICS_INTERVAL = 30
+LAST_SYSTEM_METRICS = time.time()
+LAST_PACKET_TIME = time.time()
 
 LAST_COMPLETE_DATA = {}
 LAST_PREDICTION_RESULT = None
@@ -760,6 +764,13 @@ def process_prediction(sensor_dict, rssi):
             return None
 
     converted = convert_sensor_data_for_prediction(sensor_dict)
+    # FILTER DATA TIDAK MASUK AKAL
+    if (
+        converted["RiverWaterLevel_m"] <= 0 or
+        converted["RiverWaterLevel_m"] > 5
+    ):
+        print("⚠️ Invalid water level, skip prediction")
+        return None
     feature_row = build_features_for_prediction(converted)
 
     if len(history) < MIN_HISTORY_FOR_PREDICTION:
@@ -1038,14 +1049,14 @@ while True:
         system_metrics = get_system_metrics()
         rssi_current   = get_live_rssi()
             
-        #     if data and 'sq' in data:
-        #         current_sq = int(data.get('sq'))
-        #         current_rssi = int(rfm9x.last_rssi)
-        #         current_snr = float(rfm9x.last_snr)
+            # if data and 'sq' in data:
+            #     current_sq = int(data.get('sq'))
+            #     current_rssi = int(rfm9x.last_rssi)
+            #     current_snr = float(rfm9x.last_snr)
 
-        #         qos_metrics = calculate_realtime_qos(current_sq, packet_size, current_rssi, current_snr)
-        #         write_qos_to_json(qos_metrics)
-        #         print(f"\n[QoS LIVE LOG - SQ: {current_sq}] Delay: {qos_metrics['delay_ms']}ms | Loss: {qos_metrics['packet_loss_percent']}% | RSSI: {current_rssi} dBm | SNR: {current_snr} dB")
+            #     qos_metrics = calculate_realtime_qos(current_sq, packet_size, current_rssi, current_snr)
+            #     write_qos_to_json(qos_metrics)
+            #     print(f"\n[QoS LIVE LOG - SQ: {current_sq}] Delay: {qos_metrics['delay_ms']}ms | Loss: {qos_metrics['packet_loss_percent']}% | RSSI: {current_rssi} dBm | SNR: {current_snr} dB")
         current_time = time.time()
 
         # Selalu refresh system metrics (dipakai di display + Firebase + waiting print)
@@ -1058,6 +1069,7 @@ while True:
             LAST_SYSTEM_METRICS = current_time
 
         if packet is not None:
+            LAST_PACKET_TIME = current_time
             raw_str = packet.decode("utf-8", errors="ignore")
             data = parse_packet(raw_str)
 
@@ -1095,6 +1107,30 @@ while True:
             if now - LAST_CSV_EXPORT >= CSV_EXPORT_INTERVAL:
                 export_csv()
                 LAST_CSV_EXPORT = now
+            # AUTO RESET LORA JIKA TIDAK ADA PACKET
+            if time.time() - LAST_PACKET_TIME > 120:
+                print("⚠️ LoRa timeout, reinit module...")
+                try:
+                    spi.deinit()
+                except:
+                    pass
+
+                spi = busio.SPI(board.SCK, MOSI=board.MOSI, MISO=board.MISO)
+                cs = digitalio.DigitalInOut(board.D4)
+                reset = digitalio.DigitalInOut(board.D25)
+
+                rfm9x = adafruit_rfm9x.RFM9x(spi, cs, reset, FREQ)
+
+                rfm9x.tx_power = 15
+                rfm9x.signal_bandwidth = 125000
+                rfm9x.coding_rate = 6
+                rfm9x.spreading_factor = 10
+                rfm9x.enable_crc = True
+                rfm9x.sync_word = 0x12
+
+                LAST_PACKET_TIME = time.time()
+
+                print("✅ LoRa reinitialized")
 
     except KeyboardInterrupt:
         print("\n🛑 STOP")
