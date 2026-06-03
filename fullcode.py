@@ -132,11 +132,21 @@ CM_TO_M_DIVISOR = 100.0
 # KONFIGURASI FISIK SENSOR
 # ----------------------------------------------------------------
 
-THRESHOLD_SIAGA_1_M = 1.20  # Air tumpah ke jalan (DARURAT)
-THRESHOLD_SIAGA_2_M = 1.40  # Mendekati tumpah (WASPADA)
+# Kalibrasi lapangan (jarak sensor -> permukaan air):
+#   SIAGA 1 (darurat) : 30 - 120 cm  -> distance <= 1.20 m
+#   SIAGA 2 (waspada) : 121 - 150 cm -> distance <= 1.50 m
+#   SIAGA 3 (aman)    : 151 - 200 cm -> distance >  1.50 m
+THRESHOLD_SIAGA_1_M = 1.20  # Air tumpah ke jalan (DARURAT) = 120 cm
+THRESHOLD_SIAGA_2_M = 1.50  # Mendekati tumpah (WASPADA)   = 150 cm
 # SIAGA 3 = default state (pemantauan rutin / aman)
 
-JARAK_DASAR_SUNGAI_M = 3.0
+# Jarak sensor ke dasar selokan ~2 m (sensor terpasang ~200 cm di atas dasar).
+JARAK_DASAR_SUNGAI_M = 2.0
+
+# Batas atas pembacaan jarak yang masih dianggap valid (cm).
+# Apa pun di atas ini dianggap pembacaan ultrasonik out-of-range / echo hilang
+# (mis. 613 cm) -> diabaikan, pakai nilai valid terakhir.
+SENSOR_MAX_VALID_CM = 210.0
 
 # ==================================================
 # RULE-BASED CONFIG (Estimasi Dampak)
@@ -298,23 +308,28 @@ def convert_sensor_data_for_prediction(raw_data):
     """
     Konversi paket sensor ke format input model.
 
-    Catatan satuan:
-      - raw_data['jarak_air'] di sini sudah dalam SENTIMETER
-        (sudah dikonversi mm -> cm di merge_with_last_data()).
-      - Dibagi CM_TO_M_DIVISOR (=100) untuk dapat METER, yang dipakai
-        sebagai input fitur model (RiverWaterLevel_m).
+    PENTING — paket LoRa memakai KEY PENDEK, bukan nama panjang:
+      t  -> suhu (Temperature_C)
+      h  -> kelembapan (Humidity_percent)
+      p  -> tekanan (SeaLevelPressure_hPa)
+      d  -> jarak air dalam SENTIMETER (sudah dikonversi mm -> cm
+            di merge_with_last_data())
+      rr -> rain rate (Precipitation_mm)
+
+    'd' (cm) dibagi CM_TO_M_DIVISOR (=100) untuk dapat METER, yang dipakai
+    sebagai input fitur model (RiverWaterLevel_m).
     """
-    jarak_air_cm = raw_data.get("jarak_air", 0)
+    jarak_air_cm = raw_data.get("d", 0)
     if jarak_air_cm is None:
         jarak_air_cm = 0
     distance_m = float(jarak_air_cm) / CM_TO_M_DIVISOR
 
     return {
         "timestamp":            datetime.datetime.now(),
-        "Temperature_C":        float(raw_data.get("suhu", 0) or 0),
-        "Humidity_percent":     float(raw_data.get("kelembapan", 0) or 0),
-        "SeaLevelPressure_hPa": float(raw_data.get("tekanan", 1013) or 1013),
-        "Precipitation_mm":     float(raw_data.get("rain_rate", 0) or 0),
+        "Temperature_C":        float(raw_data.get("t", 0) or 0),
+        "Humidity_percent":     float(raw_data.get("h", 0) or 0),
+        "SeaLevelPressure_hPa": float(raw_data.get("p", 1013) or 1013),
+        "Precipitation_mm":     float(raw_data.get("rr", 0) or 0),
         "RiverWaterLevel_m":    float(distance_m)
     }
 
@@ -595,17 +610,32 @@ def parse_packet(raw):
 def merge_with_last_data(data):
     """
     Gabungkan paket sensor terbaru dengan cache paket terakhir.
-    Field 'd' (jarak air) dikonversi mm -> cm di sini.
-    Setelah fungsi ini, 'd' di LAST_COMPLETE_DATA satuannya CM.
+    Field 'd' (jarak air) dikonversi mm -> cm di sini, dan HANYA ketika 'd'
+    benar-benar ada di paket BARU. Setelah fungsi ini, 'd' di
+    LAST_COMPLETE_DATA satuannya CM.
+
+    Catatan: cek dilakukan pada `data` (paket baru), bukan pada
+    LAST_COMPLETE_DATA (cache), supaya nilai cache yang sudah cm tidak
+    ikut dibagi 10 lagi setiap kali datang paket parsial tanpa 'd'.
     """
     global LAST_COMPLETE_DATA
     important_keys = ['t', 'h', 'p', 'd']
     is_complete = any(k in data for k in important_keys)
 
     if is_complete:
+        data = data.copy()  # hindari mutasi dict hasil parse
+        # Konversi mm -> cm pada paket BARU saja, lalu validasi rentang.
+        if 'd' in data and data['d'] is not None:
+            d_cm = round(float(data['d']) / 10, 1)
+            if d_cm <= 0 or d_cm > SENSOR_MAX_VALID_CM:
+                # Out-of-range / echo hilang -> abaikan 'd' supaya nilai valid
+                # terakhir di cache tidak tertimpa.
+                print(f"⚠️ Jarak air di luar rentang wajar ({d_cm} cm) - diabaikan, "
+                      f"pakai nilai valid terakhir")
+                data.pop('d', None)
+            else:
+                data['d'] = d_cm
         LAST_COMPLETE_DATA.update(data)
-        if 'd' in LAST_COMPLETE_DATA:
-            LAST_COMPLETE_DATA['d'] = round(float(LAST_COMPLETE_DATA['d']) / 10, 1)
         return LAST_COMPLETE_DATA.copy()
     else:
         merged = LAST_COMPLETE_DATA.copy()
@@ -716,7 +746,7 @@ def save_system_metrics_to_db(rssi, system_metrics):
         print("🛢 System metrics saved to PostgreSQL")
     except Exception as e:
         print(f"❌ DB Save Metrics Error: {e}")
-        
+
 
 # ===============================================================
 # PROSES PREDIKSI
@@ -843,7 +873,7 @@ def process_prediction(sensor_dict, rssi):
         print("🛢 Prediction saved to PostgreSQL")
     except Exception as e:
         print(f"❌ DB Save Error: {e}")
-        
+
 
     save_prediction_log(prediction_result)
 
@@ -913,7 +943,7 @@ def simpan_postgresql(data, rssi):
         print("🛢 PostgreSQL OK")
     except Exception as e:
         print(f"❌ PostgreSQL ERROR: {e}")
-        
+
 
 # ===============================================================
 # MAIN LOOP
@@ -929,7 +959,7 @@ while True:
         packet = rfm9x.receive(timeout=1.0)
         current_time = time.time()
         system_metrics = get_system_metrics()
-        rssi_current   = get_live_rssi()     
+        rssi_current   = get_live_rssi()
 
 
         # Simpan metrics ke Postgres secara periodik (independen dari kedatangan paket)
