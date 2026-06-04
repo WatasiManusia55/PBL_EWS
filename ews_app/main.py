@@ -9,6 +9,7 @@ from system_monitor import get_system_metrics
 from ml_thread import MLThread
 from utils import parse_packet, noise_label
 from firebase_client import FirebaseClient
+from warning_node import WarningNode
 
 class EWSApplication:
     def __init__(self):
@@ -33,6 +34,8 @@ class EWSApplication:
         self.last_system_metrics = 0
         self.last_complete_data = {}
         self.system_metrics_interval = 30
+        self.warning_node = WarningNode()
+        self.last_warning_status = None
         
     def merge_with_last_data(self, data):
         """Merge partial packet with last complete data"""
