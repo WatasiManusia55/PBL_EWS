@@ -1,23 +1,32 @@
 #!/bin/bash
 
-clear
+set -e
 
 echo "=================================================="
-echo "🚀 EWS AUTO RESTORE SYSTEM"
+echo "🚀 EWS AUTO RESTORE SYSTEM (STABLE VERSION)"
 echo "=================================================="
 
 PROJECT_DIR="/home/pi/Downloads/PBL_EWS_NEW/PBL_EWS"
+REPO_URL="https://github.com/WatasiManusia55/PBL_EWS.git"
 
 # ==================================================
-# UPDATE SYSTEM
+# 1. FIX SYSTEM STATE (WAJIB)
 # ==================================================
-echo "📦 Update package..."
+echo "🧹 Fixing broken package state..."
+
+sudo dpkg --configure -a || true
+sudo apt --fix-broken install -y || true
+
+# ==================================================
+# 2. UPDATE SYSTEM
+# ==================================================
+echo "📦 Updating system..."
 sudo apt update -y
 
 # ==================================================
-# INSTALL DEPENDENCY SYSTEM
+# 3. INSTALL DEPENDENCIES
 # ==================================================
-echo "🛠 Install system dependency..."
+echo "🛠 Installing system dependencies..."
 
 sudo apt install -y \
 python3-pip \
@@ -29,79 +38,99 @@ libpq-dev \
 build-essential
 
 # ==================================================
-# CLONE / UPDATE GITHUB
+# 4. CLONE / UPDATE REPO (FIXED)
 # ==================================================
-if [ ! -d "$PROJECT_DIR" ]; then
+echo "📥 Preparing project directory..."
 
-    echo "📥 Clone repository..."
+mkdir -p /home/pi/Downloads/PBL_EWS_NEW
 
-    mkdir -p /home/pi/Downloads/PBL_EWS_NEW
-
-    git clone git@github.com:WatasiManusia55/PBL_EWS.git "$PROJECT_DIR"
-
+if [ ! -d "$PROJECT_DIR/.git" ]; then
+    echo "📥 Cloning repository..."
+    rm -rf "$PROJECT_DIR"
+    git clone "$REPO_URL" "$PROJECT_DIR"
 else
-
-    echo "🔄 Pull latest repository..."
-
-    cd "$PROJECT_DIR" || exit
-
+    echo "🔄 Updating repository..."
+    cd "$PROJECT_DIR"
     git pull origin main
-
 fi
 
 # ==================================================
-# MASUK PROJECT
+# 5. VALIDATE PROJECT DIR
 # ==================================================
-cd "$PROJECT_DIR" || exit
+if [ ! -d "$PROJECT_DIR" ]; then
+    echo "❌ ERROR: Project directory not found!"
+    exit 1
+fi
+
+cd "$PROJECT_DIR"
 
 # ==================================================
-# VENV
+# 6. SETUP VIRTUAL ENV (SAFE RESET)
 # ==================================================
-echo "🐍 Setup Python venv..."
+echo "🐍 Setting up virtual environment..."
 
-rm -rf venv
+if [ -d "venv" ]; then
+    rm -rf venv
+fi
 
 python3 -m venv venv
-
 source venv/bin/activate
 
-python -m pip install --upgrade pip
+pip install --upgrade pip
 
 # ==================================================
-# INSTALL PYTHON PACKAGE
+# 7. INSTALL PYTHON REQUIREMENTS
 # ==================================================
-echo "📚 Install Python dependency..."
+echo "📚 Installing Python dependencies..."
 
-pip install -r requirements.txt
+if [ -f "requirements.txt" ]; then
+    pip install -r requirements.txt
+else
+    echo "⚠️ requirements.txt not found!"
+fi
 
 # ==================================================
-# POSTGRESQL START
+# 8. START POSTGRESQL
 # ==================================================
-echo "🛢 Start PostgreSQL..."
-
+echo "🛢 Starting PostgreSQL..."
 sudo systemctl enable postgresql
 sudo systemctl start postgresql
 
 # ==================================================
-# CREATE DATABASE
+# 9. CREATE DATABASE (SAFE CHECK)
 # ==================================================
-echo "🛢 Setup database..."
+echo "🛢 Setting up database..."
 
 sudo -u postgres psql <<EOF
-
-CREATE USER pi WITH PASSWORD 'ews';
+DO \$\$
+BEGIN
+   IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'pi') THEN
+      CREATE USER pi WITH PASSWORD 'ews';
+   END IF;
+END
+\$\$;
 
 ALTER USER pi CREATEDB;
 
-CREATE DATABASE ews_banjir OWNER pi;
+DO \$\$
+BEGIN
+   IF NOT EXISTS (SELECT FROM pg_database WHERE datname = 'ews_banjir') THEN
+      CREATE DATABASE ews_banjir OWNER pi;
+   END IF;
+END
+\$\$;
 
 GRANT ALL PRIVILEGES ON DATABASE ews_banjir TO pi;
-
 EOF
 
 # ==================================================
-# RUN APP
+# 10. RUN APP
 # ==================================================
-echo "🚀 Starting app.py..."
+echo "🚀 Starting application..."
 
-python app.py
+if [ -f "app.py" ]; then
+    python app.py
+else
+    echo "❌ app.py not found!"
+    exit 1
+fi
